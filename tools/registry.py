@@ -48,6 +48,13 @@ class ToolSpec:
     timeout: int = 600
     adaptive: bool = False
     description_hint: str = ""   # extra prompt hint when surfacing to Claude
+    # Safety class drives mode gating (Phase 15). One of:
+    #   passive     — no requests to target (DB/API/CT logs only)
+    #   low_active  — single-request probes (httpx, screenshots)
+    #   mod_active  — fuzzing / template scans / fingerprint probes
+    #   intrusive   — high-volume / brute / service-detection (defaults off)
+    #   disabled    — never executes (use to flag work-in-progress tool entries)
+    safety_class: str = "disabled"
 
 
 @dataclass
@@ -65,13 +72,20 @@ class ToolResult:
 @dataclass
 class DispatchContext:
     """Lightweight context for dispatch — independent of AgentContext to
-    keep tools/ free of agent-layer imports."""
+    keep tools/ free of agent-layer imports.
+
+    ``mode`` is the active operator mode (Phase 15). The dispatcher uses
+    it to enforce ``MODE_ALLOWLISTS`` before spawning any subprocess.
+    Defaults to the safest mode so any caller that forgets to set it
+    cannot accidentally run an active scan.
+    """
     job_id: str
     domain: str
     workdir: str
     db: Optional[sqlite3.Connection] = None
     threads: int = 10
     cancel_event: Optional[threading.Event] = None
+    mode: str = "passive_recon"
 
 
 # ── helpers ───────────────────────────────────────────────────────
@@ -401,6 +415,7 @@ REGISTRY: Dict[str, ToolSpec] = {
         description="Fast passive subdomain enumeration via OSINT sources.",
         input_schema=_DOMAIN_SCHEMA, handler="enum_file",
         cmd_template="subfinder -d $DOMAIN$ -o $OUTPUT$ -silent",
+        safety_class="passive",
     ),
     "amass": ToolSpec(
         name="amass", category="enum", technique="T1596",
@@ -408,29 +423,34 @@ REGISTRY: Dict[str, ToolSpec] = {
         input_schema=_DOMAIN_SCHEMA, handler="enum_file",
         cmd_template="amass enum -passive -d $DOMAIN$ -o $OUTPUT$",
         timeout=1800,
+        safety_class="passive",
     ),
     "assetfinder": ToolSpec(
         name="assetfinder", category="enum", technique="T1596",
         description="Tomnomnom subdomain finder. Stdout-only.",
         input_schema=_DOMAIN_SCHEMA, handler="enum_stdout",
         cmd_template="assetfinder --subs-only $DOMAIN$",
+        safety_class="passive",
     ),
     "findomain": ToolSpec(
         name="findomain", category="enum", technique="T1596",
         description="Cross-platform subdomain enumerator.",
         input_schema=_DOMAIN_SCHEMA, handler="enum_stdout",
         cmd_template="findomain -t $DOMAIN$ -q",
+        safety_class="passive",
     ),
     "sublist3r": ToolSpec(
         name="sublist3r", category="enum", technique="T1596",
         description="Sublist3r OSINT subdomain enumeration.",
         input_schema=_DOMAIN_SCHEMA, handler="enum_file",
         cmd_template="sublist3r -d $DOMAIN$ -o $OUTPUT$ -n",
+        safety_class="passive",
     ),
     "crtsh": ToolSpec(
         name="crtsh", category="enum", technique="T1596",
         description="Certificate Transparency log search via crt.sh API.",
         input_schema=_DOMAIN_SCHEMA, handler="crtsh",
+        safety_class="passive",
     ),
     # ── resolve / probe ───────────────────────────────────────────
     "dnsx": ToolSpec(
@@ -438,6 +458,7 @@ REGISTRY: Dict[str, ToolSpec] = {
         description="Resolve all known subdomains. Updates dns_resolved + ips.",
         input_schema=_NO_ARGS_SCHEMA, handler="dnsx",
         cmd_template="dnsx -l $INPUT_FILE$ -resp -o $OUTPUT$ -t $THREADS$",
+        safety_class="passive",
     ),
     "httpx": ToolSpec(
         name="httpx", category="http", technique="T1595",
@@ -451,6 +472,7 @@ REGISTRY: Dict[str, ToolSpec] = {
             "httpx -l $INPUT_FILE$ -o $OUTPUT$ -title -tech-detect "
             "-status-code -threads $THREADS$ -silent -json"
         ),
+        safety_class="low_active",
     ),
     "gowitness": ToolSpec(
         name="gowitness", category="screenshot", technique="T1595",
@@ -458,6 +480,7 @@ REGISTRY: Dict[str, ToolSpec] = {
         input_schema=_NO_ARGS_SCHEMA, handler="gowitness",
         cmd_template="gowitness file -f $INPUT_FILE$ -P $OUTPUT$ --threads $THREADS$",
         timeout=1800,
+        safety_class="low_active",
     ),
     "nuclei": ToolSpec(
         name="nuclei", category="vuln", technique="T1595.002",
@@ -468,6 +491,7 @@ REGISTRY: Dict[str, ToolSpec] = {
             "-severity medium,high,critical -json"
         ),
         timeout=3600,
+        safety_class="mod_active",
     ),
 
     # ── adaptive (signal-triggered) ───────────────────────────────
@@ -477,6 +501,7 @@ REGISTRY: Dict[str, ToolSpec] = {
         input_schema=_TARGET_SCHEMA, handler="adaptive", adaptive=True,
         cmd_template="graphw00f -t $TARGET$ -d",
         description_hint="signal: graphql_endpoints",
+        safety_class="mod_active",
     ),
     "clairvoyance": ToolSpec(
         name="clairvoyance", category="adaptive", technique="T1595",
@@ -488,6 +513,7 @@ REGISTRY: Dict[str, ToolSpec] = {
         cmd_template="clairvoyance $TARGET$ -o schema.json",
         description_hint="signal: graphql_endpoints",
         timeout=1200,
+        safety_class="mod_active",
     ),
     "inql": ToolSpec(
         name="inql", category="adaptive", technique="T1595",
@@ -495,6 +521,7 @@ REGISTRY: Dict[str, ToolSpec] = {
         input_schema=_TARGET_SCHEMA, handler="adaptive", adaptive=True,
         cmd_template="inql -t $TARGET$",
         description_hint="signal: graphql_endpoints",
+        safety_class="mod_active",
     ),
     "s3scanner": ToolSpec(
         name="s3scanner", category="adaptive", technique="T1595",
@@ -508,6 +535,7 @@ REGISTRY: Dict[str, ToolSpec] = {
         handler="adaptive", adaptive=True,
         cmd_template="s3scanner scan -b $TARGET$",
         description_hint="signal: s3_buckets|gcs_buckets|azure_blobs",
+        safety_class="low_active",
     ),
     "wafw00f": ToolSpec(
         name="wafw00f", category="adaptive", technique="T1595",
@@ -515,8 +543,51 @@ REGISTRY: Dict[str, ToolSpec] = {
         input_schema=_TARGET_SCHEMA, handler="adaptive", adaptive=True,
         cmd_template="wafw00f $TARGET$",
         description_hint="signal: admin_panels",
+        safety_class="low_active",
     ),
 }
+
+
+# ── mode allowlists (Phase 15) ────────────────────────────────────
+# Canonical operator modes. Each mode names the set of safety classes its
+# jobs may invoke. ``passive_recon`` is the safest mode and is the default
+# everywhere the operator hasn't picked one explicitly.
+OPERATOR_MODES: Tuple[str, ...] = (
+    "passive_recon", "active_recon", "content_discovery",
+    "vuln_triage", "evidence_collection", "report_drafting", "retest",
+)
+
+MODE_ALLOWLISTS: Dict[str, frozenset[str]] = {
+    "passive_recon":       frozenset({"passive"}),
+    "active_recon":        frozenset({"passive", "low_active"}),
+    "content_discovery":   frozenset({"passive", "low_active", "mod_active"}),
+    "vuln_triage":         frozenset({"passive", "low_active", "mod_active"}),
+    # Evidence collection lets the operator run intrusive tools but always
+    # behind explicit acknowledgement at the API layer; the registry filter
+    # alone does NOT skip the scope_acknowledged check.
+    "evidence_collection": frozenset({"passive", "low_active", "mod_active", "intrusive"}),
+    "report_drafting":     frozenset({"passive"}),
+    "retest":              frozenset({"passive"}),
+}
+
+
+def safety_class_of(name: str) -> str:
+    """Lookup the safety class for a registered tool. Returns 'disabled'
+    when the tool is unknown — fail closed."""
+    spec = REGISTRY.get(name)
+    return spec.safety_class if spec else "disabled"
+
+
+def tools_for_mode(mode: str) -> List[str]:
+    """All tool names whose safety_class is allowed in this operator mode."""
+    allowed = MODE_ALLOWLISTS.get(mode, frozenset())
+    return sorted(name for name, spec in REGISTRY.items()
+                  if spec.safety_class in allowed)
+
+
+def is_tool_allowed_in_mode(name: str, mode: str) -> bool:
+    """True iff the tool's safety class is in the mode's allowlist."""
+    return safety_class_of(name) in MODE_ALLOWLISTS.get(mode, frozenset())
 
 
 # ── public surface ────────────────────────────────────────────────
@@ -549,10 +620,15 @@ def claude_tool_specs(only: Optional[List[str]] = None) -> List[Dict[str, Any]]:
 
 
 def dispatch(name: str, args: Dict[str, Any], ctx: DispatchContext) -> ToolResult:
-    """Execute a tool by registry name. Tactic-gated and error-isolated."""
+    """Execute a tool by registry name. Mode-gated, tactic-gated, error-isolated."""
     spec = REGISTRY.get(name)
     if spec is None:
         return ToolResult(name, False, f"unknown tool: {name}", error="not in registry")
+    # Mode gate first — strictest, runs even when tactic happens to allow it.
+    try:
+        opsec.assert_tool_allowed(name, ctx.mode)
+    except opsec.ModeViolation as e:
+        return ToolResult(spec.name, False, "mode gate refused", error=str(e))
     try:
         opsec.assert_execution_allowed(spec.technique, context=spec.name)
     except opsec.ExecutionBoundaryError as e:

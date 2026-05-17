@@ -65,13 +65,15 @@ def main_initialized_db(tmp_path):
 # ═══════════════════════════════════════════════════════════
 class TestDiscovery:
 
-    def test_finds_all_four_migrations(self):
+    def test_finds_all_migrations(self):
         mods = R.discover()
         assert mods == [
             "001_baseline",
             "002_findings_attack",
             "003_agent_memory",
             "004_submission_drafts",
+            "005_programs",
+            "006_evidence_modes_taxonomy",
         ]
 
     def test_runner_module_excluded(self):
@@ -90,12 +92,14 @@ class TestFreshDB:
             "002_findings_attack",
             "003_agent_memory",
             "004_submission_drafts",
+            "005_programs",
+            "006_evidence_modes_taxonomy",
         ]
 
     def test_run_pending_applies_all_four(self, fresh_db):
         conn, _ = fresh_db
         applied = R.run_pending(conn)
-        assert len(applied) == 4
+        assert len(applied) == 6
 
     def test_baseline_tables_exist(self, fresh_db):
         conn, _ = fresh_db
@@ -126,6 +130,8 @@ class TestFreshDB:
             "002_findings_attack",
             "003_agent_memory",
             "004_submission_drafts",
+            "005_programs",
+            "006_evidence_modes_taxonomy",
         ]
 
 
@@ -152,7 +158,7 @@ class TestIdempotency:
 class TestPopulatedDB:
 
     def test_main_init_db_runs_migrations(self, main_initialized_db):
-        # main.init_db() now invokes the runner; all 4 should be applied.
+        # main.init_db() now invokes the runner; all migrations should be applied.
         conn, _ = main_initialized_db
         rows = conn.execute("SELECT name FROM migrations").fetchall()
         names = {r[0] for r in rows}
@@ -161,6 +167,8 @@ class TestPopulatedDB:
             "002_findings_attack",
             "003_agent_memory",
             "004_submission_drafts",
+            "005_programs",
+            "006_evidence_modes_taxonomy",
         }
 
     def test_existing_data_preserved(self, main_initialized_db):
@@ -312,12 +320,12 @@ class TestCLI:
     def test_status_on_fresh_dir(self, tmp_path):
         r = self._run(["status"], tmp_path)
         assert r.returncode == 0, r.stderr
-        assert "pending (4)" in r.stdout
+        assert "pending (6)" in r.stdout
 
     def test_up_applies_all(self, tmp_path):
         r = self._run(["up", "--no-backup"], tmp_path)
         assert r.returncode == 0, r.stderr
-        assert "applied 4 migration" in r.stdout
+        assert "applied 6 migration" in r.stdout
 
     def test_up_twice_noop(self, tmp_path):
         self._run(["up", "--no-backup"], tmp_path)

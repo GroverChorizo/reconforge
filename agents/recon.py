@@ -103,6 +103,7 @@ class ReconAgent(BaseAgent):
             job_id=ctx.job_id, domain=domain,
             workdir=self.workdir or _default_workdir(ctx.job_id, domain),
             db=ctx.db, cancel_event=self.cancel_event,
+            mode=(ctx.inputs or {}).get("mode", "passive_recon"),
         )
 
         steps = 0
@@ -180,6 +181,7 @@ class ReconAgent(BaseAgent):
             job_id=ctx.job_id, domain=domain,
             workdir=self.workdir or _default_workdir(ctx.job_id, domain),
             db=ctx.db, cancel_event=self.cancel_event,
+            mode=(ctx.inputs or {}).get("mode", "passive_recon"),
         )
         bundle: Dict[str, Any] = signals_mod.empty_bundle()
         tools_used: List[str] = []

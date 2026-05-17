@@ -14,6 +14,42 @@ ReconForge is intended for authorized security research only. Configure program 
 - Maps findings to MITRE ATT&CK techniques and produces submission drafts for HackerOne, Bugcrowd, Intigriti, YesWeHack, Synack, and common report formats.
 - Supports Claude API mode and local Ollama fallback for LLM-backed agents.
 
+## v0.2.0 Operator Console (Phases 13-20)
+
+The v3 UI is a program-workspace shell — pick a program, the whole console
+re-orients around it. Operator flow:
+
+1. **Onboard** — paste a program scope JSON. ReconForge stores it as a
+   first-class `programs` row and offers it in the topbar selector.
+2. **Pick a workflow + mode** — `passive_recon`, `active_recon`,
+   `content_discovery`, `vuln_triage`, `evidence_collection`,
+   `report_drafting`, `retest`. The chosen mode gates which tools the
+   pipeline allows. `passive_recon` is the safest default.
+3. **Pre-flight** — every mod-active+ tool launch passes through a modal
+   showing the matched scope rule, allowed/disallowed methods, RoE
+   excerpt, command preview, and effective rate-limit. Cancel default,
+   explicit ACK required to proceed.
+4. **Recon + Hunt** — the agentic pipeline runs end-to-end (or partial
+   per mode). Discovered subdomains appear in the Assets tree with
+   scope badges; Hunter playbook output lands in the Findings Kanban
+   board.
+5. **Triage** — drag findings between status columns (`new` →
+   `needs_review` → `confirmed` → `draft_ready` → `submitted` →
+   `retesting` / `closed`). Click a card for the detail page with
+   tabs: Overview · Raw Evidence · AI Analysis · ATT&CK/CWE/OWASP ·
+   Manual Verification · Drafts.
+6. **Verify** — Manual Verification tab carries the curated checklist
+   for the vuln class (IDOR, mass-assignment, XSS, XXE, SSRF,
+   takeover). AI Analysis rows are mutable until the operator clicks
+   Verify; verified rows freeze with `verified_by` / `verified_at`.
+7. **Report** — per-platform drafts. The Report Quality Gate runs 10
+   deterministic checks (title, sections, evidence, scope re-verified,
+   no secrets, manual checklist acknowledged). Copy-to-clipboard is
+   gated until all checks pass.
+
+Open `http://localhost:8342/` after starting the server. The legacy SPA
+stays reachable behind `RECONFORGE_UI=legacy` for emergency rollback.
+
 ## Repository Layout
 
 ```text

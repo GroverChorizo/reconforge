@@ -1504,6 +1504,13 @@ class ReconHandler(BaseHTTPRequestHandler):
                     return self._err("Authentication required", 401)
                 return self._redirect("/login")
 
+            # ── v2 router (Phase 13+) ────────────────────────
+            if path.startswith("/api/v2/"):
+                from api.server import dispatch as _v2_dispatch
+                body = self._body_json() if method in ("POST", "PUT") else None
+                status, payload = _v2_dispatch(method, path, qs, body, get_db())
+                return self._json(payload, status)
+
             if method == "GET":
                 self._route_get(path, qs, session)
             elif method == "POST":

@@ -3,24 +3,47 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ReconForge v2</title>
+<title>ReconForge v3</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
+
 <header class="topbar">
   <span class="brand">ReconForge</span>
-  <span class="version">v2</span>
-  <nav>
-    <a href="#agents" data-view="agents">Agents</a>
-    <a href="#heatmap" data-view="heatmap">ATT&amp;CK</a>
-    <a href="#findings" data-view="findings">Findings</a>
-    <a href="#submissions" data-view="submissions">Submissions</a>
-  </nav>
+  <span class="version">v3</span>
+
+  <span class="program-context" id="program-context">
+    <label for="program-select">Program</label>
+    <select id="program-select" aria-label="Active program">
+      <option value="">— no programs —</option>
+    </select>
+    <span id="program-platform" class="platform-chip"></span>
+    <span id="scope-indicator" class="scope-indicator" hidden>
+      <span class="dot"></span>
+      <span class="label"></span>
+    </span>
+  </span>
+
+  <span class="topbar-spacer"></span>
 </header>
 
-<main id="view-root">
-  <div class="loading">Loading…</div>
-</main>
+<div class="shell">
+  <nav class="leftnav" id="leftnav">
+    <a href="#workspace/dashboard"  data-section="dashboard">Mission Control</a>
+    <a href="#workspace/scope"      data-section="scope">Scope</a>
+    <a href="#workspace/assets"     data-section="assets">Assets</a>
+    <a href="#workspace/findings"   data-section="findings">Findings</a>
+    <a href="#workspace/attack"     data-section="attack">ATT&amp;CK Map</a>
+    <a href="#workspace/reports"    data-section="reports">Reports</a>
+    <a href="#workspace/tools"      data-section="tools">Toolchain</a>
+    <a href="#workspace/agents"     data-section="agents">Agents</a>
+    <a href="#workspace/settings"   data-section="settings">Settings</a>
+  </nav>
+
+  <main id="view-root">
+    <div class="loading">Loading…</div>
+  </main>
+</div>
 
 <script src="/static/app.js"></script>
 </body>

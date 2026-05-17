@@ -32,6 +32,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from agents.base import BaseAgent, AgentContext, AgentResult, LLMError, CostCapExceeded
 from attack import mapper as attack_mapper
+from attack import taxonomy as attack_taxonomy
+from core import evidence as evidence_mod
 
 
 _PROMPT_DIR = Path(__file__).parent / "playbooks"
@@ -360,8 +362,24 @@ PLAYBOOKS: Dict[str, PlaybookFn] = {
 }
 
 
-def select_playbooks(recon: Dict) -> List[str]:
-    """Decide which playbooks to run from the recon summary."""
+# ── operator-mode gate (Phase 15) ─────────────────────────────────
+# Playbooks differ in the kind of analysis they perform on DB content. The
+# takeover playbook is deterministic and uses only data already in the DB;
+# the LLM-driven playbooks reason over recon's live_hosts summary. Modes
+# without live HTTP data should skip the LLM playbooks entirely.
+HUNTER_PLAYBOOKS_BY_MODE: Dict[str, frozenset[str]] = {
+    "passive_recon":       frozenset(),                # no live data; skip all
+    "active_recon":        frozenset({"takeover"}),    # deterministic only
+    "content_discovery":   frozenset(PLAYBOOKS.keys()),
+    "vuln_triage":         frozenset(PLAYBOOKS.keys()),
+    "evidence_collection": frozenset(PLAYBOOKS.keys()),
+    "report_drafting":     frozenset(),
+    "retest":              frozenset(),
+}
+
+
+def select_playbooks(recon: Dict, mode: str = "vuln_triage") -> List[str]:
+    """Decide which playbooks to run from the recon summary + operator mode."""
     signals = recon.get("signals") or {}
     out: List[str] = []
     # Adaptive — only when triggered.
@@ -376,7 +394,10 @@ def select_playbooks(recon: Dict) -> List[str]:
     out.append("takeover")
     # Stable dedup.
     seen: set = set()
-    return [p for p in out if not (p in seen or seen.add(p))]
+    deduped = [p for p in out if not (p in seen or seen.add(p))]
+    # Mode gate — drop playbooks the operator mode doesn't permit.
+    allowed = HUNTER_PLAYBOOKS_BY_MODE.get(mode, frozenset(PLAYBOOKS.keys()))
+    return [p for p in deduped if p in allowed]
 
 
 # ════════════════════════════════════════════════════════════════
@@ -400,8 +421,9 @@ class HunterAgent(BaseAgent):
             return AgentResult(self.name, False, None,
                                error="recon_summary missing 'domain'")
 
-        playbooks = select_playbooks(recon)
-        self.emit_event("hunter.start", {"playbooks": playbooks})
+        mode = (ctx.inputs or {}).get("mode", "vuln_triage")
+        playbooks = select_playbooks(recon, mode=mode)
+        self.emit_event("hunter.start", {"playbooks": playbooks, "mode": mode})
 
         all_candidates: List[FindingCandidate] = []
         by_class: Dict[str, int] = {}
@@ -504,6 +526,16 @@ class HunterAgent(BaseAgent):
             "description": c.description,
             "evidence": c.evidence,
         })
+        # CWE + OWASP taxonomy (deterministic lookup).
+        attack_taxonomy.persist_taxonomy_for_finding(
+            self.db, finding_row_id, c.vuln_class,
+        )
+        # Structured 4-tier evidence rows alongside the legacy evidence_json
+        # blob. Source classification keys off the playbook name.
+        evidence_mod.record_evidence_dict(
+            self.db, finding_row_id, c.evidence or {},
+            playbook=c.playbook,
+        )
         self.db.commit()
         return {
             "id": finding_row_id, "bug_id": bug_id,

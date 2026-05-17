@@ -34,6 +34,7 @@ class ToolEntry:
     go_install: Optional[str] = None
     pip: Optional[str] = None
     notes: str = ""
+    category: str = "other"       # subdomain | dns_http | screenshot | vuln | fuzz | api | graphql | cloud | js | other
 
     def install_cmd(self) -> Optional[List[str]]:
         if self.apt:
@@ -54,56 +55,78 @@ class ToolEntry:
 CATALOG: Dict[str, ToolEntry] = {
     # Subdomain enumeration
     "subfinder":    ToolEntry("Subfinder",   "subfinder", "-version",
-                              go_install="github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"),
+                              go_install="github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest",
+                              category="subdomain"),
     "amass":        ToolEntry("Amass",       "amass",     "-version",
                               go_install="github.com/owasp-amass/amass/v4/...@master",
-                              apt="amass"),
+                              apt="amass", category="subdomain"),
     "assetfinder":  ToolEntry("Assetfinder", "assetfinder",
-                              go_install="github.com/tomnomnom/assetfinder@latest"),
+                              go_install="github.com/tomnomnom/assetfinder@latest",
+                              category="subdomain"),
     "findomain":    ToolEntry("Findomain",   "findomain", "--version",
-                              apt="findomain"),
-    "sublist3r":    ToolEntry("Sublist3r",   "sublist3r", apt="sublist3r"),
+                              apt="findomain", category="subdomain"),
+    "sublist3r":    ToolEntry("Sublist3r",   "sublist3r", apt="sublist3r",
+                              category="subdomain"),
     # DNS / HTTP
     "dnsx":         ToolEntry("DNSx",        "dnsx",      "-version",
-                              go_install="github.com/projectdiscovery/dnsx/cmd/dnsx@latest"),
+                              go_install="github.com/projectdiscovery/dnsx/cmd/dnsx@latest",
+                              category="dns_http"),
     "httpx":        ToolEntry("HTTPx",       "httpx",     "-version",
-                              go_install="github.com/projectdiscovery/httpx/cmd/httpx@latest"),
+                              go_install="github.com/projectdiscovery/httpx/cmd/httpx@latest",
+                              category="dns_http"),
     "puredns":      ToolEntry("Puredns",     "puredns",
-                              go_install="github.com/d3mondev/puredns/v2@latest"),
+                              go_install="github.com/d3mondev/puredns/v2@latest",
+                              category="dns_http"),
     # Screenshots
     "gowitness":    ToolEntry("Gowitness",   "gowitness",
-                              go_install="github.com/sensepost/gowitness@latest"),
+                              go_install="github.com/sensepost/gowitness@latest",
+                              category="screenshot"),
     # Vuln scan
     "nuclei":       ToolEntry("Nuclei",      "nuclei",    "-version",
-                              go_install="github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"),
-    "nikto":        ToolEntry("Nikto",       "nikto",     "-Version", apt="nikto"),
+                              go_install="github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
+                              category="vuln"),
+    "nikto":        ToolEntry("Nikto",       "nikto",     "-Version", apt="nikto",
+                              category="vuln"),
     # WAF / CDN
-    "wafw00f":      ToolEntry("WafW00f",     "wafw00f",   "--version", apt="wafw00f"),
+    "wafw00f":      ToolEntry("WafW00f",     "wafw00f",   "--version", apt="wafw00f",
+                              category="dns_http"),
     # Crawl / fuzz
     "ffuf":         ToolEntry("ffuf",        "ffuf",      "-V",
-                              go_install="github.com/ffuf/ffuf/v2@latest"),
+                              go_install="github.com/ffuf/ffuf/v2@latest",
+                              category="fuzz"),
     "katana":       ToolEntry("Katana",      "katana",    "-version",
-                              go_install="github.com/projectdiscovery/katana/cmd/katana@latest"),
-    "feroxbuster":  ToolEntry("Feroxbuster", "feroxbuster", "--version", apt="feroxbuster"),
+                              go_install="github.com/projectdiscovery/katana/cmd/katana@latest",
+                              category="fuzz"),
+    "feroxbuster":  ToolEntry("Feroxbuster", "feroxbuster", "--version", apt="feroxbuster",
+                              category="fuzz"),
     "x8":           ToolEntry("x8",          "x8",        "--version",
-                              notes="No package manager; cargo install x8"),
+                              notes="No package manager; cargo install x8",
+                              category="fuzz"),
     # API / Swagger
     "kiterunner":   ToolEntry("Kiterunner",  "kr",
-                              go_install="github.com/assetnote/kiterunner/cmd/kr@latest"),
+                              go_install="github.com/assetnote/kiterunner/cmd/kr@latest",
+                              category="api"),
     # GraphQL
-    "graphw00f":    ToolEntry("graphw00f",   "graphw00f", pip="graphw00f"),
-    "clairvoyance": ToolEntry("clairvoyance","clairvoyance", pip="clairvoyance"),
-    "inql":         ToolEntry("InQL",        "inql",      pip="inql-scanner"),
+    "graphw00f":    ToolEntry("graphw00f",   "graphw00f", pip="graphw00f",
+                              category="graphql"),
+    "clairvoyance": ToolEntry("clairvoyance","clairvoyance", pip="clairvoyance",
+                              category="graphql"),
+    "inql":         ToolEntry("InQL",        "inql",      pip="inql-scanner",
+                              category="graphql"),
     # Cloud
     "s3scanner":    ToolEntry("s3scanner",   "s3scanner",
-                              go_install="github.com/sa7mon/s3scanner@latest"),
+                              go_install="github.com/sa7mon/s3scanner@latest",
+                              category="cloud"),
     "cdncheck":     ToolEntry("CDNcheck",    "cdncheck",
-                              go_install="github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest"),
+                              go_install="github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest",
+                              category="cloud"),
     # JS analysis
     "jsluice":      ToolEntry("JSluice",     "jsluice",
-                              go_install="github.com/BishopFox/jsluice/cmd/jsluice@latest"),
+                              go_install="github.com/BishopFox/jsluice/cmd/jsluice@latest",
+                              category="js"),
     "trufflehog":   ToolEntry("TruffleHog",  "trufflehog",
-                              go_install="github.com/trufflesecurity/trufflehog/v3@latest"),
+                              go_install="github.com/trufflesecurity/trufflehog/v3@latest",
+                              category="js"),
 }
 
 
@@ -118,6 +141,7 @@ class ToolStatus:
     install_method: str = "manual"
     install_cmd: Optional[List[str]] = None
     notes: str = ""
+    category: str = "other"
 
 
 def scan(catalog: Optional[Dict[str, ToolEntry]] = None,
@@ -136,7 +160,7 @@ def scan(catalog: Optional[Dict[str, ToolEntry]] = None,
             installed=bool(path), path=path, version=ver,
             install_method=entry.install_method(),
             install_cmd=entry.install_cmd(),
-            notes=entry.notes,
+            notes=entry.notes, category=entry.category,
         ))
     return out
 

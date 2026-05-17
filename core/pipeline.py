@@ -60,10 +60,16 @@ _AGENT_ORDER = ("scope_guard", "strategist", "recon", "hunter", "analyst", "repo
 def run_agentic_pipeline(
     ctx: AgentContext,
     *,
+    mode: str = "passive_recon",
     agents: Optional[Dict[str, Any]] = None,
     emit_fn: Optional[Callable] = None,
 ) -> PipelineResult:
     """Run the six-agent chain.
+
+    ``mode`` is the operator-chosen profile (Phase 15). It's threaded into
+    ``ctx.inputs["mode"]`` so every downstream agent + tool dispatch sees
+    the same value. Defaults to ``passive_recon`` — the safest mode —
+    so callers who forget to set it cannot accidentally run an active scan.
 
     ``agents`` may be a dict overriding default agent classes — tests use
     this to inject stubs. Production callers pass nothing.
@@ -83,10 +89,12 @@ def run_agentic_pipeline(
     # ``inputs.domain``. Populate whichever is missing so the same ctx
     # serves every agent.
     ctx.inputs = ctx.inputs or {}
+    ctx.inputs["mode"] = mode
     if "target" not in ctx.inputs and result.domain:
         ctx.inputs["target"] = result.domain
     if "domain" not in ctx.inputs and result.domain:
         ctx.inputs["domain"] = result.domain
+    emit("pipeline.mode_selected", {"mode": mode})
 
     # ── 1. ScopeGuard ──
     sg_result = _run_agent(classes["scope_guard"], ctx, emit)
