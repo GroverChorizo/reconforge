@@ -1,0 +1,27 @@
+{
+  "name": "full-test",
+  "platform": "intigriti",
+  "platform_handle": "grover",
+  "policy_url": "https://example.invalid/policy",
+  "in_scope": [
+    {"type": "domain",         "value": "acme.com",            "tier": 1},
+    {"type": "wildcard",       "value": "*.acme.com"                   },
+    {"type": "wildcard",       "value": "*.api.acme.com"               },
+    {"type": "domain",         "value": "admin.acme.com"               },
+    {"type": "domain",         "value": "dev-portal.acme.com"          },
+    {"type": "cidr",           "value": "198.51.100.0/24"              },
+    {"type": "mobile_ios",     "value": "com.acme.mobile"              },
+    {"type": "mobile_android", "value": "com.acme.mobile"              },
+    {"type": "source_code",    "value": "https://github.com/acme"      }
+  ],
+  "out_of_scope": [
+    {"type": "domain", "value": "careers.acme.com"},
+    {"type": "domain", "value": "blog.acme.com"}
+  ],
+  "bounty_ranges": {
+    "critical": [3000, 8000],
+    "high":     [1000, 4000],
+    "medium":   [400, 1500],
+    "low":      [100, 400]
+  }
+}

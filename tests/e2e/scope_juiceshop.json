@@ -1,0 +1,19 @@
+{
+  "name": "juiceshop",
+  "platform": "hackerone",
+  "platforms": ["hackerone", "bugcrowd"],
+  "platform_handle": "grover",
+  "policy_url": "https://localhost.invalid/juiceshop-policy",
+  "in_scope": [
+    {"type": "domain", "value": "localhost:3000"},
+    {"type": "domain", "value": "127.0.0.1:3000"}
+  ],
+  "out_of_scope": [],
+  "bounty_ranges": {
+    "critical": [0, 0],
+    "high":     [0, 0],
+    "medium":   [0, 0],
+    "low":      [0, 0]
+  },
+  "notes": "Locally-hosted OWASP Juice Shop for safe E2E testing. No real bounties."
+}

@@ -1,0 +1,26 @@
+{
+  "name": "example-program",
+  "platform": "intigriti",
+  "platform_handle": "grover",
+  "policy_url": "https://app.intigriti.com/programs/example/policy",
+  "in_scope": [
+    {"type": "domain",         "value": "example.com",                "tier": 1},
+    {"type": "wildcard",       "value": "*.example.com",              "tier": 2},
+    {"type": "cidr",           "value": "203.0.113.0/24",             "tier": 3},
+    {"type": "mobile_ios",     "value": "com.example.app",            "tier": 2},
+    {"type": "mobile_android", "value": "com.example.app",            "tier": 2},
+    {"type": "source_code",    "value": "https://github.com/example", "tier": 4}
+  ],
+  "out_of_scope": [
+    {"type": "domain",   "value": "careers.example.com"},
+    {"type": "wildcard", "value": "*.dev.example.com"},
+    {"type": "domain",   "value": "media.example.com"},
+    {"type": "domain",   "value": "stories.example.com"}
+  ],
+  "bounty_ranges": {
+    "critical": [2000, 5000],
+    "high":     [1000, 3000],
+    "medium":   [500, 1000],
+    "low":      [100, 500]
+  }
+}

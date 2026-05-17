@@ -29,6 +29,8 @@ try:
 except ImportError:
     _psutil = None; HAS_PSUTIL = False
 
+import scope_guard  # Phase 1: pure-logic gate, runs before every dispatch
+
 # ═══════════════════════════════════════════════════════════
 #  CONSTANTS
 # ═══════════════════════════════════════════════════════════
@@ -205,6 +207,16 @@ def init_db() -> None:
         os.makedirs(d, exist_ok=True)
     get_db().executescript(_SCHEMA)
     get_db().commit()
+    # Phase 2: forward-only migrations. Baseline (001) is a no-op against the
+    # _SCHEMA we just ran; 002+ add agentic tables. No pre-migration backup
+    # at startup — the schema was just rebuilt and is internally consistent.
+    try:
+        from db.migrations import runner as _mig
+        applied = _mig.run_pending(get_db(), backup_fn=None)
+        if applied:
+            emit(f"Migrations applied: {', '.join(applied)}", "INFO", "migrate")
+    except Exception as e:
+        emit(f"Migration runner failed: {e}", "ERROR", "migrate")
     emit("Database ready")
 
 def db_row(sql: str, params=()) -> Optional[sqlite3.Row]:
@@ -1175,11 +1187,43 @@ def run_pipeline(job: Job) -> None:
 # ═══════════════════════════════════════════════════════════
 #  JOB DISPATCH
 # ═══════════════════════════════════════════════════════════
+def _active_program() -> Optional[Dict[str, Any]]:
+    """Load the active program scope from config. None = guard bypassed.
+
+    Set via config["active_program"] = "scopes/<name>.json" (relative to repo
+    root, or absolute). Wizard will write this in Phase 11; for now, set with
+    set_config("active_program", "scopes/rivian.json") from a Python shell.
+    """
+    path = get_config("active_program")
+    if not path:
+        return None
+    full = path if os.path.isabs(path) else os.path.join(_BASE, path)
+    try:
+        with open(full, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        emit(f"Could not load active program {path}: {e}", "ERROR", "scope_guard")
+        return None
+
+
 def submit_domain(raw_domain: str, username: str,
                   options: Optional[Dict] = None) -> List["Job"]:
-    """Expand wildcards then enqueue jobs. Returns list of Job objects."""
+    """Expand wildcards then enqueue jobs. Returns list of Job objects.
+
+    Scope Guard (Phase 1) gates every expanded target. Rejected domains are
+    logged to history and skipped — they never become Job objects.
+    """
     jobs = []
+    prog = _active_program()
     for domain in expand_domain(raw_domain.strip().lower()):
+        if prog is not None:
+            result = scope_guard.check(domain, prog)
+            if not result["allowed"]:
+                add_history(domain, "scope_guard",
+                            f"REJECTED ({username}): {result['reason']}")
+                emit(f"Scope Guard rejected {domain}: {result['reason']}",
+                     "WARNING", "scope_guard")
+                continue
         job = Job(domain, username, options)
         with _lock:
             _jobs[job.id] = job

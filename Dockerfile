@@ -25,7 +25,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 # ── Python packages ────────────────────────────────────────
-RUN pip install --no-cache-dir psutil sublist3r theHarvester wafw00f
+# Recon CLI tools
+RUN pip install --no-cache-dir sublist3r theHarvester wafw00f
+# Runtime deps for ReconForge v2 (Phase 4a pinned in pyproject.toml)
+RUN pip install --no-cache-dir psutil "pydantic>=2.6,<3" "claude-agent-sdk>=0.1.0" "textual>=0.60"
 
 # ── Go tools (single RUN to minimise layers) ───────────────
 ARG GOVERSION=1.22.4
@@ -86,7 +89,23 @@ RUN nuclei -update-templates 2>/dev/null || true
 
 # ── Application ────────────────────────────────────────────
 WORKDIR /app
+COPY pyproject.toml .
+COPY __init__.py .
+COPY __main__.py .
 COPY main.py .
+COPY scope_guard.py .
+COPY scopes/ ./scopes/
+COPY db/ ./db/
+COPY attack/ ./attack/
+COPY core/ ./core/
+COPY data/ ./data/
+COPY agents/ ./agents/
+COPY tools/ ./tools/
+COPY api/ ./api/
+COPY ui/ ./ui/
+COPY obsidian/ ./obsidian/
+COPY submissions/ ./submissions/
+COPY wizard/ ./wizard/
 
 RUN mkdir -p /data
 

@@ -1,0 +1,57 @@
+{
+  "$schema": "schema for the run_smoke.sh harness — every entry MUST be true",
+  "version": "v0.1.0",
+  "files": [
+    {
+      "path": "${VAULT}/01-Programs/juiceshop/strategist_plan.md",
+      "must_exist": true,
+      "min_size_bytes": 400,
+      "must_contain": ["Recommended Starting Tier", "OPSEC Notes"]
+    },
+    {
+      "glob": "${VAULT}/01-Programs/juiceshop/BUG-*.md",
+      "min_count": 1
+    }
+  ],
+  "database": [
+    {
+      "name": "findings_scored",
+      "sql": "SELECT COUNT(*) FROM findings WHERE cvss_score IS NOT NULL AND cvss_score > 0",
+      "min": 1
+    },
+    {
+      "name": "attack_tactics_covered",
+      "sql": "SELECT COUNT(DISTINCT tactic) FROM attack_techniques",
+      "min": 3
+    },
+    {
+      "name": "submission_drafts_per_platform",
+      "sql": "SELECT COUNT(DISTINCT platform) FROM submission_drafts",
+      "min": 2
+    },
+    {
+      "name": "no_auto_approved_drafts",
+      "sql": "SELECT COUNT(*) FROM submission_drafts WHERE human_approved = 1",
+      "max": 0
+    },
+    {
+      "name": "all_six_agents_ran",
+      "sql": "SELECT COUNT(DISTINCT agent) FROM agent_runs",
+      "min": 6
+    }
+  ],
+  "api": [
+    {
+      "name": "heatmap_returns_14_tactics",
+      "url": "http://localhost:8342/api/attack/heatmap?job=${JOB_ID}",
+      "json_path": "$.tactics",
+      "min_keys": 14
+    },
+    {
+      "name": "heatmap_non_empty",
+      "url": "http://localhost:8342/api/attack/heatmap?job=${JOB_ID}",
+      "json_path": "$.total_findings",
+      "min": 1
+    }
+  ]
+}

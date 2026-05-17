@@ -1,0 +1,15 @@
+{
+  "name": "minimal-test",
+  "platform": "hackerone",
+  "platform_handle": "grover",
+  "in_scope": [
+    {"type": "domain", "value": "example.com"}
+  ],
+  "out_of_scope": [],
+  "bounty_ranges": {
+    "critical": [1000, 5000],
+    "high":     [500, 2000],
+    "medium":   [200, 800],
+    "low":      [50, 200]
+  }
+}
