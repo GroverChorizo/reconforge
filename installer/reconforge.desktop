@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ReconForge
+GenericName=Bug Bounty Research Assistant
+Comment=Adaptive recon + agentic vuln analysis with ATT&CK mapping
+Exec=reconforge run
+Icon=reconforge
+Terminal=true
+Categories=Development;Security;Network;
+Keywords=security;pentest;recon;bug bounty;hacking;

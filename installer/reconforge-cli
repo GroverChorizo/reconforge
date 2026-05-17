@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#
+# `reconforge` — Docker container wrapper.
+#
+# Subcommands:
+#   wizard   — first-run setup (interactive Textual TUI)
+#   run      — start service (foreground)
+#   start    — start service detached
+#   stop     — stop the running service
+#   logs     — tail logs
+#   shell    — open a shell inside the container
+#   version  — print image version
+#
+set -euo pipefail
+
+IMAGE="${RECONFORGE_IMAGE:-ghcr.io/grover-bb/reconforge:latest}"
+NAME="${RECONFORGE_CONTAINER:-reconforge}"
+PORT="${RECONFORGE_PORT:-8342}"
+CFG_DIR="${HOME}/.config/reconforge"
+VAULT_DIR="${RECONFORGE_VAULT:-${HOME}/Documents/BugBountyVault}"
+
+run_args=(
+  --name "$NAME"
+  -p "${PORT}:8342"
+  -v "${CFG_DIR}:/root/.config/reconforge"
+  -v "${VAULT_DIR}:/data/vault"
+  -e "RECONFORGE_VAULT=/data/vault"
+)
+
+case "${1:-help}" in
+  wizard)
+    docker run --rm -it "${run_args[@]}" "$IMAGE" python -m reconforge.wizard
+    ;;
+  run)
+    docker run --rm -it "${run_args[@]}" "$IMAGE" python -m reconforge run
+    ;;
+  start)
+    docker run -d --restart unless-stopped "${run_args[@]}" "$IMAGE" \
+      python -m reconforge run
+    echo "Started — http://localhost:${PORT}"
+    ;;
+  stop)
+    docker stop "$NAME" >/dev/null
+    docker rm   "$NAME" >/dev/null 2>&1 || true
+    echo "Stopped."
+    ;;
+  logs)
+    docker logs -f "$NAME"
+    ;;
+  shell)
+    docker exec -it "$NAME" bash
+    ;;
+  scan)
+    shift
+    docker exec -it "$NAME" python -m reconforge scan "$@"
+    ;;
+  version)
+    docker run --rm "$IMAGE" python -m reconforge --version
+    ;;
+  help|--help|-h|"")
+    cat <<'EOF'
+reconforge — bug-bounty research assistant (Docker wrapper)
+
+Usage:
+  reconforge wizard       interactive first-run setup
+  reconforge run          start service in foreground
+  reconforge start        start service detached
+  reconforge stop         stop the running service
+  reconforge logs         tail container logs
+  reconforge shell        open a shell inside the container
+  reconforge scan DOMAIN  submit a domain to the running service
+  reconforge version      print version
+
+Env:
+  RECONFORGE_IMAGE        container image (default ghcr.io/grover-bb/reconforge:latest)
+  RECONFORGE_PORT         host port (default 8342)
+  RECONFORGE_VAULT        host path mounted as /data/vault
+EOF
+    ;;
+  *)
+    echo "unknown subcommand: $1" >&2
+    exit 2
+    ;;
+esac

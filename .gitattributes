@@ -1,0 +1,16 @@
+# Force LF on files that must run on Linux regardless of clone OS
+*.sh        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.desktop   text eol=lf
+installer/reconforge-cli text eol=lf
+installer/install.sh     text eol=lf
+
+# Python — default LF
+*.py        text eol=lf
+
+# Binary
+*.png       binary
+*.jpg       binary
+*.gif       binary
+*.ico       binary
