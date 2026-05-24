@@ -1337,13 +1337,13 @@ def _resource_worker() -> None:
             _res_buf.append(entry)
             db_exec(
                 "INSERT INTO system_resources(cpu_percent,memory_percent,disk_percent) VALUES(?,?,?)",
-                (cpu, mem, dsk), commit=False)
-            # Don't commit every 5s — let WAL handle it; commit every minute
-            if len(_res_buf) % 12 == 0:
-                get_db().commit()
-            # Trim old rows
+                (cpu, mem, dsk))
+            # Trim old rows. Commit each statement: WAL allows concurrent
+            # readers but only ONE writer, and an uncommitted write
+            # transaction holds the write lock — leaving it open for ~60s
+            # was blocking session INSERTs during login.
             cutoff = (datetime.now() - timedelta(seconds=RESOURCE_RETENTION)).strftime("%Y-%m-%dT%H:%M:%S")
-            db_exec("DELETE FROM system_resources WHERE created_at < ?", (cutoff,), commit=False)
+            db_exec("DELETE FROM system_resources WHERE created_at < ?", (cutoff,))
         except Exception as e:
             pass
         _shutdown.wait(RESOURCE_INTERVAL)
@@ -1476,8 +1476,15 @@ def start_workers() -> None:
 class ReconHandler(BaseHTTPRequestHandler):
     server_version = f"{APP_NAME}/{VERSION}"
 
-    def log_message(self, fmt, *args):  # silence default access log
-        pass
+    def log_message(self, fmt, *args):
+        # Route access log through emit() so it shows up alongside other server
+        # output. Set RECONFORGE_QUIET_ACCESS_LOG=1 to suppress.
+        if os.environ.get("RECONFORGE_QUIET_ACCESS_LOG"):
+            return
+        try:
+            emit(fmt % args, "INFO", "http")
+        except Exception:
+            pass
 
     # ── routing ─────────────────────────────────────────────
     def do_GET(self):    self._dispatch("GET")
@@ -1718,12 +1725,12 @@ class ReconHandler(BaseHTTPRequestHandler):
         if not row or not verify_password(password, row["password_hash"], row["salt"]):
             return self._err("Invalid credentials", 401)
         token = create_session(row["id"], username, row["role"])
-        expires = (datetime.now() + timedelta(seconds=SESSION_TTL)).strftime(
-            "%a, %d %b %Y %H:%M:%S GMT")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
+        # Max-Age is relative seconds — immune to client/server clock skew,
+        # which bit us on VMs whose RTC drifted from real UTC.
         self.send_header("Set-Cookie",
-                         f"session={token}; Path=/; HttpOnly; SameSite=Lax; Expires={expires}")
+                         f"session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_TTL}")
         body_b = json.dumps({"success": True, "message": "OK",
                              "data": {"role": row["role"], "username": username}}).encode()
         self.send_header("Content-Length", len(body_b))
@@ -1737,7 +1744,7 @@ class ReconHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Set-Cookie",
-                         "session=; Path=/; HttpOnly; Expires=Thu, 01 Jan 1970 00:00:00 GMT")
+                         "session=; Path=/; HttpOnly; Max-Age=0")
         body_b = json.dumps({"success": True, "message": "Logged out"}).encode()
         self.send_header("Content-Length", len(body_b))
         self.end_headers()
@@ -3070,7 +3077,8 @@ def main() -> None:
         server.socket = ctx.wrap_socket(server.socket, server_side=True)
     proto = "https" if ctx else "http"
     emit(f"Listening on {proto}://{args.host}:{args.port}", "INFO", "system")
-    print(f"\n  {APP_NAME} v{VERSION}  —  {proto}://127.0.0.1:{args.port}\n")
+    display_host = "127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host
+    print(f"\n  {APP_NAME} v{VERSION}  —  {proto}://{display_host}:{args.port}\n")
 
     def _sig(*_):
         emit("Shutting down…", "INFO", "system")
