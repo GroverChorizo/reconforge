@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyberbrain.local/schemas/reconforge-manifest.json",
+  "title": "reconforge run manifest",
+  "type": "object",
+  "required": ["schema_version", "run_id", "program", "started_at", "tools", "counts"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "program": {
+      "type": "string",
+      "minLength": 1
+    },
+    "started_at": {"type": "string", "format": "date-time"},
+    "completed_at": {"type": ["string", "null"], "format": "date-time"},
+    "scope": {
+      "type": "object",
+      "properties": {
+        "in_scope": {"type": "array", "items": {"type": "string"}},
+        "out_of_scope": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string"},
+          "version": {"type": "string"},
+          "args": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "counts": {
+      "type": "object",
+      "required": ["hosts", "endpoints", "findings"],
+      "properties": {
+        "hosts": {"type": "integer", "minimum": 0},
+        "endpoints": {"type": "integer", "minimum": 0},
+        "findings": {"type": "integer", "minimum": 0},
+        "wordlist_hits": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "notes": {"type": "string"}
+  },
+  "additionalProperties": true
+}

@@ -121,6 +121,17 @@ def run_agentic_pipeline(
             # but try anyway — they'll cleanly fail with informative errors.
 
     result.completed_at = datetime.now(timezone.utc).isoformat()
+
+    # Emit contract output for vault ingest. Failure is logged but never
+    # changes the pipeline status — vault sync is downstream of completion.
+    try:
+        from core.manifest_emitter import emit_run
+        run_dir = emit_run(ctx, result)
+        emit("pipeline.contract_emitted", {"run_dir": str(run_dir)})
+    except Exception as e:
+        emit("pipeline.contract_emit_failed",
+             {"error": f"{type(e).__name__}: {e}"})
+
     emit("pipeline.completed", result.to_dict())
     return result
 

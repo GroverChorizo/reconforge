@@ -71,6 +71,45 @@ tests/                  Unit, integration, and smoke tests
 
 Runtime output is written under `recon_data/` by default and is intentionally ignored by Git.
 
+## Vault contract output
+
+Every completed agentic-pipeline run emits a contract-compliant directory
+that the CyberBrain Obsidian vault's `tools/ingest_recon.py` can ingest:
+
+```
+<RECONFORGE_OUTPUT>/<program-slug>/<YYYY-MM-DD-HHmm>/
+    _manifest.json
+    hosts.jsonl
+    endpoints.jsonl
+    findings.jsonl
+    raw/         (placeholder; tools may drop raw output here later)
+    screenshots/ (placeholder)
+```
+
+`<RECONFORGE_OUTPUT>` resolves from `$RECONFORGE_OUTPUT_DIR` (default
+`./out/`). The schema is owned by the vault — see
+`CyberBrain/.system/schemas/reconforge-manifest.schema.json` and
+`CyberBrain/RECONFORGE_CONTRACT.md`. A pinned copy lives at
+`tests/fixtures/reconforge-manifest.schema.json`.
+
+Emission happens automatically at end-of-run in
+`core/pipeline.py::run_agentic_pipeline()` and never marks the pipeline
+failed if it errors — pipeline status is independent of vault sync.
+**A completed run with no contract directory is not a pipeline failure**:
+check the run's event log for `pipeline.contract_emit_failed` and
+re-emit manually with the command below. To backfill or re-emit a run by
+ID:
+
+```powershell
+python -m reconforge contract emit --job-id <id> [--vault-output PATH]
+```
+
+The vault then promotes drafts via:
+
+```powershell
+python tools\vault_gateway.py promote-run --run-id rf-<id> --program <slug>
+```
+
 ## Requirements
 
 - Python 3.11+

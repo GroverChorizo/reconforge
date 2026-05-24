@@ -8,6 +8,7 @@ ReconForge CLI entry. Dispatches to:
     python -m reconforge migrate status — list applied/pending
     python -m reconforge attack sample  — print mapper output for synthetic findings
     python -m reconforge scope check    — validate a target against a program JSON
+    python -m reconforge contract emit  — re-emit the vault contract output for a completed job
 
 Phase 4a: this is a thin dispatcher. Heavier subcommands (wizard, scan)
 land in their respective phases. ``run`` delegates to the existing
@@ -70,6 +71,112 @@ def _cmd_scan(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_contract(argv: list[str]) -> int:
+    """Vault-contract subcommand. Today: ``emit`` re-emits the per-run
+    directory for a job that already completed. Useful for backfilling runs
+    that finished before the emitter shipped, or for testing on a known job
+    without re-running the pipeline.
+    """
+    if not argv or argv[0] in ("-h", "--help"):
+        print(
+            "usage: reconforge contract emit --job-id <id> [--vault-output PATH] "
+            "[--domain D] [--program-slug S]\n"
+            "  --vault-output PATH overrides $RECONFORGE_OUTPUT_DIR for this run.\n"
+            "  --domain / --program-slug are required only if the job row "
+            "is missing them.",
+            file=sys.stderr,
+        )
+        return 0 if argv else 2
+
+    sub = argv[0]
+    rest = argv[1:]
+    if sub != "emit":
+        print(f"unknown contract subcommand: {sub}", file=sys.stderr)
+        return 2
+
+    import argparse
+    import json as _json
+    from types import SimpleNamespace
+
+    ap = argparse.ArgumentParser(prog="reconforge contract emit")
+    ap.add_argument("--job-id", required=True)
+    ap.add_argument("--vault-output", default=None,
+                    help="overrides RECONFORGE_OUTPUT_DIR for this run")
+    ap.add_argument("--domain", default=None,
+                    help="override domain (defaults to completed_jobs.domain)")
+    ap.add_argument("--program-slug", default=None,
+                    help="override program slug (defaults to job's program)")
+    args = ap.parse_args(rest)
+
+    if args.vault_output:
+        import os
+        os.environ["RECONFORGE_OUTPUT_DIR"] = args.vault_output
+
+    import main as legacy_main
+    legacy_main.init_db()
+    db = legacy_main.get_db() if hasattr(legacy_main, "get_db") else legacy_main._db()
+
+    # Load the completed job row.
+    job_row = db.execute(
+        "SELECT job_id, domain, started_at, completed_at, status, "
+        "program_id, mode FROM completed_jobs WHERE job_id = ?",
+        (args.job_id,),
+    ).fetchone()
+    if not job_row:
+        print(f"no completed_jobs row for job_id={args.job_id}", file=sys.stderr)
+        return 1
+
+    def _g(row, key, default=None):
+        if hasattr(row, "keys") and key in row.keys():
+            return row[key]
+        return default
+
+    domain = args.domain or _g(job_row, "domain")
+    started_at = _g(job_row, "started_at") or _g(job_row, "completed_at")
+    completed_at = _g(job_row, "completed_at")
+
+    # Reconstruct the program dict if available.
+    program_dict = None
+    pid = _g(job_row, "program_id")
+    if pid:
+        prog_row = db.execute(
+            "SELECT slug, name, scope_json, out_of_scope_json FROM programs WHERE id = ?",
+            (pid,),
+        ).fetchone()
+        if prog_row:
+            program_dict = {
+                "slug": args.program_slug or _g(prog_row, "slug"),
+                "name": _g(prog_row, "name"),
+                "in_scope": _json.loads(_g(prog_row, "scope_json") or "[]"),
+                "out_of_scope": _json.loads(_g(prog_row, "out_of_scope_json") or "[]"),
+            }
+    if program_dict is None and args.program_slug:
+        program_dict = {"slug": args.program_slug, "name": args.program_slug,
+                        "in_scope": [], "out_of_scope": []}
+
+    ctx = SimpleNamespace(
+        job_id=args.job_id,
+        program=program_dict,
+        inputs={"domain": domain, "mode": _g(job_row, "mode") or ""},
+        db=db,
+    )
+    result = SimpleNamespace(
+        job_id=args.job_id,
+        domain=domain or "",
+        status=_g(job_row, "status") or "completed",
+        started_at=started_at,
+        completed_at=completed_at,
+        agents={},   # legacy backfill has no per-agent record
+        errors={},
+        total_cost_usd=0.0,
+    )
+
+    from core.manifest_emitter import emit_run
+    out_dir = emit_run(ctx, result)
+    print(f"emitted contract output to: {out_dir}")
+    return 0
+
+
 def _cmd_wizard(argv: list[str]) -> int:
     # Phase 11 will replace this with the Textual TUI.
     print("reconforge wizard: not yet implemented (Phase 11). "
@@ -79,12 +186,13 @@ def _cmd_wizard(argv: list[str]) -> int:
 
 
 _CMDS = {
-    "run":     _cmd_run,
-    "migrate": _cmd_migrate,
-    "attack":  _cmd_attack,
-    "scope":   _cmd_scope,
-    "scan":    _cmd_scan,
-    "wizard":  _cmd_wizard,
+    "run":      _cmd_run,
+    "migrate":  _cmd_migrate,
+    "attack":   _cmd_attack,
+    "scope":    _cmd_scope,
+    "scan":     _cmd_scan,
+    "wizard":   _cmd_wizard,
+    "contract": _cmd_contract,
 }
 
 

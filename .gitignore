@@ -1,5 +1,6 @@
 # Runtime data — never commit scan results or credentials
 recon_data/
+out/
 
 # Python
 __pycache__/
