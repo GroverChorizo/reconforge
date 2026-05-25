@@ -390,13 +390,13 @@ _DEFAULT_TOOLS: Dict[str, Dict] = {
     "github_subdomains": {
         "name": "GitHub-Subdomains", "type": "enum", "step": 1,
         "cmd": "github-subdomains -d $DOMAIN$ -t $GITHUB_TOKEN$ -o $OUTPUT$",
-        "enabled": False, "max_concurrent": 2, "parse_mode": "lines",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
         "description": "GitHub code search for subdomain discovery",
     },
     "theharvester": {
         "name": "theHarvester", "type": "enum", "step": 1,
         "cmd": "theHarvester -d $DOMAIN$ -b all -f $OUTPUT$",
-        "enabled": False, "max_concurrent": 2, "parse_mode": "lines",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
         "description": "OSINT email and subdomain harvesting",
     },
     "dnsx": {
@@ -432,19 +432,19 @@ _DEFAULT_TOOLS: Dict[str, Dict] = {
     "wafw00f": {
         "name": "WafW00f", "type": "recon", "step": 7,
         "cmd": "wafw00f $SUBDOMAIN$ -o $OUTPUT$ -f json",
-        "enabled": False, "max_concurrent": 3, "parse_mode": "json",
+        "enabled": True, "max_concurrent": 3, "parse_mode": "json",
         "description": "WAF detection and fingerprinting",
     },
     "ffuf": {
         "name": "ffuf", "type": "fuzz", "step": 8,
         "cmd": "ffuf -w $WORDLIST$ -u https://$SUBDOMAIN$/FUZZ -o $OUTPUT$ -of json -t $THREADS$ -mc 200,204,301,302,307",
-        "enabled": False, "max_concurrent": 2, "parse_mode": "json",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "json",
         "description": "Fast web content discovery fuzzer",
     },
     "nmap": {
         "name": "Nmap", "type": "port_scan", "step": 9,
         "cmd": "nmap -sV -T4 --open -oJ $OUTPUT$ $SUBDOMAIN$",
-        "enabled": False, "max_concurrent": 2, "parse_mode": "json",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "json",
         "description": "Network port scanner and service detection",
     },
 }

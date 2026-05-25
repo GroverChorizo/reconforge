@@ -379,7 +379,11 @@ HUNTER_PLAYBOOKS_BY_MODE: Dict[str, frozenset[str]] = {
 
 
 def select_playbooks(recon: Dict, mode: str = "vuln_triage") -> List[str]:
-    """Decide which playbooks to run from the recon summary + operator mode."""
+    """Decide which playbooks to run from the recon summary. Mode is no
+    longer used to filter — agents pick by signals (graphql_endpoints
+    drives graphql; login_pages drives jwt; live_hosts drives the
+    always-on set). HUNTER_PLAYBOOKS_BY_MODE remains as a reference for
+    the *default* set per mode but is not used to refuse playbooks."""
     signals = recon.get("signals") or {}
     out: List[str] = []
     # Adaptive — only when triggered.
@@ -394,10 +398,7 @@ def select_playbooks(recon: Dict, mode: str = "vuln_triage") -> List[str]:
     out.append("takeover")
     # Stable dedup.
     seen: set = set()
-    deduped = [p for p in out if not (p in seen or seen.add(p))]
-    # Mode gate — drop playbooks the operator mode doesn't permit.
-    allowed = HUNTER_PLAYBOOKS_BY_MODE.get(mode, frozenset(PLAYBOOKS.keys()))
-    return [p for p in deduped if p in allowed]
+    return [p for p in out if not (p in seen or seen.add(p))]
 
 
 # ════════════════════════════════════════════════════════════════

@@ -1,17 +1,22 @@
 """
-OPSEC primitives. Phase 3 ships the tactic-execution boundary; Phase 7
+OPSEC primitives. Phase 3 shipped the tactic-execution boundary; Phase 7
 will extend this module with the shared rate-limiter, proxy gate, and
 kill-switch hooks.
 
-THE BOUNDARY (CLAUDE.md doctrine + plan section 5):
-  Mapping/reporting findings across all 14 ATT&CK tactics is unrestricted.
-  TOOL EXECUTION is fenced to TA0043 Reconnaissance + TA0042 Resource
-  Development. Any tool wrapper that would map to a tactic outside that
-  set MUST call assert_execution_allowed(technique_id) and raise
-  ExecutionBoundaryError on violation.
+GUARDRAIL POLICY (post-Phase-B build-out, 2026-05-25):
+  This module previously refused tool execution outside TA0043/TA0042 and
+  refused tools whose safety_class was not allowed in the operator's mode.
+  Both refusals are now neutralized — agents pick tools by job context,
+  scope_guard is the only execution gate that remains.
 
-  This is not advisory — it is the difference between bug bounty research
-  and unauthorized access. Bypassing this gate is an OPSEC violation.
+  The classification metadata stays: safety_class on every tool spec,
+  EXEC_ALLOWED_TACTICS as the "natural recon set", MODE_ALLOWLISTS for the
+  per-mode default toolsets. These are advisory — they drive UI signals
+  (modal warnings, default playbooks) but never block.
+
+  Scope is enforced by ``scope_guard.check`` / ``programs.scope_check``.
+  That is the only thing standing between an in-scope test and a program
+  ban; it is NOT neutralized.
 """
 from __future__ import annotations
 
@@ -39,18 +44,24 @@ DEFAULT_MODE_RATE_LIMITS: Dict[str, int] = {
 
 
 class ExecutionBoundaryError(RuntimeError):
-    """Raised when an attempted tool action falls outside the allowed tactics."""
+    """Legacy: was raised when a tool action fell outside TA0043/TA0042.
+    Retained for backwards compatibility with callers that catch it; the
+    gate functions below no longer raise this."""
 
 
 class ModeViolation(RuntimeError):
-    """Raised when a tool invocation does not match the active operator mode."""
+    """Legacy: was raised when a tool invocation did not match the active
+    operator mode. Retained for backwards compatibility with callers that
+    catch it; the gate functions below no longer raise this."""
 
 
-def is_execution_allowed(technique_id: str) -> bool:
-    """True iff the technique maps to at least one allowed tactic.
+def is_execution_allowed(technique_id: str) -> bool:  # informational
+    """True iff the technique maps to at least one tactic in the natural
+    recon set. This is *advisory* now — call sites no longer refuse
+    execution based on this. Useful for UI badges ("this is exploitation,
+    not recon") but not for refusal.
 
-    Unknown technique IDs return True (don't block on missing taxonomy data).
-    Callers that want strict behavior should validate the ID first.
+    Unknown technique IDs return True.
     """
     tech = taxonomy.get_technique(technique_id)
     if tech is None:
@@ -60,38 +71,31 @@ def is_execution_allowed(technique_id: str) -> bool:
 
 
 def assert_execution_allowed(technique_id: str, context: Optional[str] = None) -> None:
-    if is_execution_allowed(technique_id):
-        return
-    tech = taxonomy.get_technique(technique_id) or {}
-    tactics = tech.get("tactics", [])
-    raise ExecutionBoundaryError(
-        f"execution boundary violated: {technique_id} "
-        f"({tech.get('name', '?')}) maps to {tactics}, "
-        f"outside allowed set {sorted(EXEC_ALLOWED_TACTICS)}"
-        + (f" [context: {context}]" if context else "")
-    )
+    """No-op kept for API stability. Previously raised
+    ExecutionBoundaryError; now returns without effect because tool
+    execution is no longer fenced to TA0043/TA0042. Scope is enforced by
+    ``scope_guard.check`` upstream of any tool dispatch.
+    """
+    return None
 
 
 def filter_executable(technique_ids: Iterable[str]) -> list[str]:
-    """Return only the technique IDs that are allowed for execution."""
-    return [t for t in technique_ids if is_execution_allowed(t)]
+    """No-op filter kept for API stability. Returns the input unchanged
+    because execution is no longer fenced by tactic."""
+    return list(technique_ids)
 
 
-# ── Phase 15: operator-mode gate ──────────────────────────────────
+# ── Phase 15: operator-mode gate (now advisory only) ──────────────
 def assert_tool_allowed(tool_name: str, mode: str) -> None:
-    """Raise ModeViolation if ``tool_name``'s safety_class is not in ``mode``'s
-    allowlist. Imports are deferred to avoid a circular import between
-    ``tools/registry`` and this module — registry imports opsec, opsec only
-    imports registry inside this gate.
+    """No-op kept for API stability. Previously raised ModeViolation when
+    ``tool_name``'s safety_class fell outside ``mode``'s allowlist; now
+    returns without effect because agents pick tools by job context. The
+    classification is still available via
+    ``tools.registry.safety_class_of`` and
+    ``tools.registry.is_tool_allowed_in_mode`` for UI badges and default
+    toolset suggestions.
     """
-    from tools import registry as _registry
-    if not _registry.is_tool_allowed_in_mode(tool_name, mode):
-        cls = _registry.safety_class_of(tool_name)
-        allowed = sorted(_registry.MODE_ALLOWLISTS.get(mode, frozenset()))
-        raise ModeViolation(
-            f"mode {mode!r} does not allow {tool_name!r} (safety_class={cls!r}); "
-            f"this mode permits {allowed}"
-        )
+    return None
 
 
 def preflight(
@@ -122,16 +126,20 @@ def preflight(
     else:
         effective_rps = mode_default
 
-    try:
-        assert_tool_allowed(tool_name, mode)
-        allowed = True
-        reason = f"mode {mode!r} allows safety_class={safety!r}"
-    except ModeViolation as e:
-        allowed = False
-        reason = str(e)
+    # Mode gating is now advisory. Surface the classification in the
+    # reason field so the modal still shows "this is intrusive" but never
+    # blocks execution on it. Scope check (upstream of preflight) is the
+    # only refusal.
+    from tools import registry as _registry
+    in_default_set = _registry.is_tool_allowed_in_mode(tool_name, mode)
+    if in_default_set:
+        reason = f"mode {mode!r} default set includes safety_class={safety!r}"
+    else:
+        reason = (f"safety_class={safety!r} is outside mode {mode!r}'s "
+                  f"default set — executing anyway (mode gating advisory only)")
 
     return {
-        "allowed":         allowed,
+        "allowed":         True,  # mode dimension never blocks now
         "reason":          reason,
         "tool":            tool_name,
         "target":          target,

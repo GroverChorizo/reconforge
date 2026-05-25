@@ -126,12 +126,12 @@ class TestModeAllowlists:
         assert R.is_tool_allowed_in_mode("nuclei", "vuln_triage") is True
 
 
-# ── opsec gate ────────────────────────────────────────────────────
+# ── opsec gate (post-Phase-B: now advisory only, never refuses) ───
 class TestOpsecModeGate:
 
-    def test_passive_rejects_active_tool(self):
-        with pytest.raises(opsec.ModeViolation):
-            opsec.assert_tool_allowed("nuclei", "passive_recon")
+    def test_passive_no_longer_rejects_active_tool(self):
+        # Phase B removed mode refusal — the assert is now a no-op.
+        opsec.assert_tool_allowed("nuclei", "passive_recon")
 
     def test_passive_allows_passive_tool(self):
         opsec.assert_tool_allowed("subfinder", "passive_recon")
@@ -139,10 +139,10 @@ class TestOpsecModeGate:
     def test_active_allows_low_active(self):
         opsec.assert_tool_allowed("httpx", "active_recon")
 
-    def test_unknown_tool_blocked_everywhere(self):
-        # Unknown tool → safety_class='disabled', which no mode permits.
-        with pytest.raises(opsec.ModeViolation):
-            opsec.assert_tool_allowed("notatool", "evidence_collection")
+    def test_unknown_tool_no_longer_blocked(self):
+        # Unknown tool used to raise; now it returns (refusal happens
+        # later in dispatch on "unknown tool", not at the mode gate).
+        opsec.assert_tool_allowed("notatool", "evidence_collection")
 
 
 class TestOpsecPreflight:
@@ -153,10 +153,14 @@ class TestOpsecPreflight:
         assert out["safety_class"] == "passive"
         assert out["mode"] == "passive_recon"
 
-    def test_active_tool_passive_mode_blocked(self):
+    def test_active_tool_passive_mode_allowed_with_advisory(self):
+        # Phase B: mode no longer blocks. Preflight still surfaces the
+        # classification mismatch in the reason field so the modal can
+        # warn the operator, but allowed stays True.
         out = opsec.preflight("nuclei", "passive_recon")
-        assert out["allowed"] is False
-        assert "does not allow" in out["reason"]
+        assert out["allowed"] is True
+        assert "advisory" in out["reason"]
+        assert out["safety_class"] == "mod_active"
 
     def test_rate_limit_takes_min_of_hint_and_default(self):
         # hint=3, mode=active_recon default=10 → effective 3
@@ -221,42 +225,59 @@ class TestWorkflows:
         assert {t["id"] for t in d["tools"]} >= {"httpx", "gowitness"}
 
 
-# ── dispatch refuses mode-violating tool ──────────────────────────
+# ── dispatch no longer refuses on mode (post-Phase-B) ─────────────
 class TestDispatchModeGate:
 
-    def test_dispatch_refuses_active_tool_in_passive_mode(self, tmp_path):
+    def test_dispatch_no_longer_refuses_active_tool_in_passive_mode(self, tmp_path):
+        # Phase B removed the mode refusal in dispatch. The call should
+        # now proceed to the tool handler (which may then fail for other
+        # reasons — missing binary, etc — but NOT with "mode gate refused").
         ctx = R.DispatchContext(
             job_id="J1", domain="acme.com",
             workdir=str(tmp_path), mode="passive_recon",
         )
         result = R.dispatch("nuclei", {"domain": "acme.com"}, ctx)
+        # We only assert the refusal *isn't* the mode gate. Real execution
+        # may fail because nuclei isn't installed in the test env or the
+        # handler raises — both are valid outcomes for this assertion.
+        assert result.summary != "mode gate refused"
+
+    def test_dispatch_still_refuses_unknown_tool(self, tmp_path):
+        ctx = R.DispatchContext(
+            job_id="J1", domain="acme.com",
+            workdir=str(tmp_path), mode="passive_recon",
+        )
+        result = R.dispatch("notatool", {"domain": "acme.com"}, ctx)
         assert result.ok is False
-        assert result.summary == "mode gate refused"
-        assert "does not allow" in (result.error or "")
+        assert "unknown tool" in result.summary
 
 
-# ── hunter playbook filter ────────────────────────────────────────
+# ── hunter playbook selection (mode no longer filters) ────────────
 class TestHunterPlaybookFilter:
 
-    def test_passive_recon_runs_no_playbooks(self):
+    def test_passive_recon_still_picks_by_signals(self):
+        # Phase B: mode no longer filters playbooks. With graphql signal
+        # and live_hosts, the full triggered set runs regardless of mode.
         from agents.hunter import select_playbooks
         recon = {"live_hosts": 10, "signals": {"graphql_endpoints": ["/graphql"]}}
-        assert select_playbooks(recon, mode="passive_recon") == []
+        out = select_playbooks(recon, mode="passive_recon")
+        assert "graphql" in out
+        assert "takeover" in out
 
-    def test_active_recon_runs_only_takeover(self):
+    def test_active_recon_picks_by_signals_too(self):
         from agents.hunter import select_playbooks
         recon = {"live_hosts": 10, "signals": {"graphql_endpoints": ["/graphql"],
                                                  "login_pages": ["/login"]}}
         out = select_playbooks(recon, mode="active_recon")
-        assert out == ["takeover"]
+        # With both signals plus live_hosts > 0, the full set fires.
+        assert set(out) == {"graphql", "jwt", "idor", "ssrf", "xss",
+                             "bizlogic", "api_misconfig", "takeover"}
 
     def test_vuln_triage_runs_full_set(self):
         from agents.hunter import select_playbooks
         recon = {"live_hosts": 10,
                  "signals": {"graphql_endpoints": ["/g"], "login_pages": ["/l"]}}
         out = select_playbooks(recon, mode="vuln_triage")
-        # All 8 playbooks gate as triggered (graphql + login_pages drive
-        # graphql + jwt; live_hosts drives the rest; takeover always on).
         assert set(out) == {"graphql", "jwt", "idor", "ssrf", "xss",
                              "bizlogic", "api_misconfig", "takeover"}
 
@@ -345,14 +366,16 @@ class TestPreflightRoute:
         assert out["allowed"] is False
         assert "out_of_scope" in out["reason"]
 
-    def test_mode_blocks_active_tool_in_passive(self, acme, db):
+    def test_mode_no_longer_blocks_active_tool_in_passive(self, acme, db):
+        # Phase B removed the mode refusal. Preflight returns allowed=True
+        # for in-scope targets regardless of safety_class vs mode, and
+        # the reason field carries the advisory text instead.
         out = routes.jobs_preflight(db, {
             "program_slug": acme.slug, "target": "api.acme.com",
             "mode": "passive_recon", "tool": "nuclei",
         })
-        # In-scope but mode blocks the tool.
-        assert out["allowed"] is False
-        assert "does not allow" in out["reason"]
+        assert out["allowed"] is True
+        assert "advisory" in out["reason"]
         assert out["scope"]["matched"]["value"] == "*.acme.com"
 
     def test_command_preview_substitutes_target(self, acme, db):
@@ -417,12 +440,13 @@ class TestPhase15Dispatch:
         assert status == 200
         assert body["allowed"] is True
 
-    def test_preflight_route_mode_blocked_still_200(self, acme, db):
+    def test_preflight_route_mode_no_longer_blocks_in_scope(self, acme, db):
+        # Phase B: in-scope tool is always allowed; safety_class advisory
+        # is in reason but does not block.
         status, body = server.dispatch(
             "POST", "/api/v2/jobs/preflight", {},
             {"program_slug": acme.slug, "target": "api.acme.com",
              "mode": "passive_recon", "tool": "nuclei"}, db,
         )
-        # In-scope + mode-blocked is a valid response; modal renders it.
         assert status == 200
-        assert body["allowed"] is False
+        assert body["allowed"] is True

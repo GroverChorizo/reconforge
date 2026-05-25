@@ -262,8 +262,12 @@ class TestRegistry:
         # binary missing path → ok=False, error="missing" or rc=-1
         assert r.ok is False
 
-    def test_dispatch_tactic_gate_blocks(self):
-        """Faked spec with a non-recon tactic must be refused."""
+    def test_dispatch_tactic_gate_no_longer_blocks(self):
+        """Phase B: tactic gate was neutralized. Even with a non-recon
+        tactic the dispatch proceeds to the handler. The handler may
+        still fail (e.g. subfinder binary missing in the test env), but
+        NOT with 'boundary'. Real refusals now come from scope_guard
+        upstream, not from tactic classification."""
         with patch.object(toolreg.opsec, "is_execution_allowed", return_value=False), \
              patch.object(toolreg.opsec, "get_technique",
                           return_value={"name": "x", "tactics": ["TA0001"]},
@@ -271,8 +275,10 @@ class TestRegistry:
             ctx = toolreg.DispatchContext(job_id="j", domain="acme.com",
                                           workdir="/tmp/x")
             r = toolreg.dispatch("subfinder", {"domain": "acme.com"}, ctx)
-        assert r.ok is False
-        assert "boundary" in r.summary or "boundary" in (r.error or "")
+        # We only assert the refusal isn't the tactic boundary. The
+        # handler may legitimately fail for unrelated reasons.
+        assert "boundary" not in (r.summary or "")
+        assert "boundary" not in (r.error or "")
 
 
 # ═══════════════════════════════════════════════════════════

@@ -259,16 +259,22 @@ class TestOpsecBoundary:
     def test_impact_blocked(self):
         assert opsec.is_execution_allowed("T1485") is False  # Data Destruction
 
-    def test_assert_raises_on_blocked(self):
-        with pytest.raises(opsec.ExecutionBoundaryError, match="T1190"):
-            opsec.assert_execution_allowed("T1190", context="unit test")
+    def test_assert_no_longer_raises_on_blocked(self):
+        # Phase B: assert_execution_allowed is now a no-op. The
+        # is_execution_allowed query stays for UI-badging ("this is
+        # exploitation, not recon"), but tool execution is no longer
+        # fenced to TA0043/TA0042 — agents pick by job context.
+        opsec.assert_execution_allowed("T1190", context="unit test")
 
     def test_assert_passes_on_allowed(self):
         opsec.assert_execution_allowed("T1595")  # no raise
 
-    def test_filter_executable(self):
-        out = opsec.filter_executable(["T1595", "T1190", "T1583.001", "T1552"])
-        assert set(out) == {"T1595", "T1583.001"}
+    def test_filter_executable_now_passthrough(self):
+        # Phase B: filter_executable returns input unchanged (no longer
+        # drops non-recon techniques). is_execution_allowed still answers
+        # the classification question for UI use.
+        techs = ["T1595", "T1190", "T1583.001", "T1552"]
+        assert opsec.filter_executable(techs) == techs
 
     def test_unknown_technique_not_blocked(self):
         # unknown ID returns True so missing taxonomy data doesn't paralyze
