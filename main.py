@@ -491,6 +491,25 @@ _DEFAULT_TOOLS: Dict[str, Dict] = {
         "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
         "description": "Swagger/OpenAPI corpus brute (67k+ spec routes)",
     },
+    # ── Phase C Batch 3: JS analysis ──────────────────────────────
+    "jsluice": {
+        "name": "jsluice", "type": "js", "step": 5,
+        "cmd": "jsluice urls $INPUT_FILE$",
+        "enabled": True, "max_concurrent": 3, "parse_mode": "stdout",
+        "description": "AST-based URL + secret extraction from JS files",
+    },
+    "mantra": {
+        "name": "Mantra", "type": "js", "step": 5,
+        "cmd": "mantra -ua ReconForge -p $TARGET$",
+        "enabled": True, "max_concurrent": 3, "parse_mode": "stdout",
+        "description": "Regex-based API-key / secret hunter for live JS responses",
+    },
+    "trufflehog": {
+        "name": "TruffleHog", "type": "js", "step": 5,
+        "cmd": "trufflehog filesystem $INPUT_FILE$ --json --no-update",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "jsonl",
+        "description": "High-entropy + regex secret scanner (filesystem mode)",
+    },
 }
 
 def get_tools_config() -> Dict[str, Dict]:

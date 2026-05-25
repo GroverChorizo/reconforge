@@ -68,7 +68,10 @@ RUN go install -v github.com/owasp-amass/amass/v4/...@latest          2>/dev/nul
     go install -v github.com/d3mondev/puredns/v2@latest                 2>/dev/null || true && \
     go install -v github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest 2>/dev/null || true && \
     go install -v github.com/projectdiscovery/katana/cmd/katana@latest  2>/dev/null || true && \
-    go install -v github.com/assetnote/kiterunner/cmd/kr@latest         2>/dev/null || true
+    go install -v github.com/assetnote/kiterunner/cmd/kr@latest         2>/dev/null || true && \
+    go install -v github.com/BishopFox/jsluice/cmd/jsluice@latest       2>/dev/null || true && \
+    go install -v github.com/brosck/mantra@latest                       2>/dev/null || true && \
+    go install -v github.com/trufflesecurity/trufflehog/v3@latest       2>/dev/null || true
 
 # Phase C Batch 2: Rust-based HTTP exploration tools (feroxbuster, x8).
 # Installed via cargo so they pick up musl-friendly builds.

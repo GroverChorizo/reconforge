@@ -630,6 +630,42 @@ REGISTRY: Dict[str, ToolSpec] = {
         timeout=2400,
         safety_class="mod_active",
     ),
+
+    # ── Phase C Batch 3: JS analysis ──────────────────────────────
+    "jsluice": ToolSpec(
+        name="jsluice", category="adaptive", technique="T1213",
+        description=(
+            "BishopFox jsluice — AST-based URL and secret extraction "
+            "from JS files. Chain after katana surfaces JS sources."
+        ),
+        input_schema=_NO_ARGS_SCHEMA, handler="adaptive", adaptive=True,
+        cmd_template="jsluice urls $INPUT_FILE$",
+        description_hint="signal: js_endpoints (post-katana)",
+        safety_class="passive",
+    ),
+    "mantra": ToolSpec(
+        name="mantra", category="adaptive", technique="T1552.001",
+        description=(
+            "Brosck Mantra — regex-based API-key / secret hunter for "
+            "live JS responses. Fetches the page and scans inline scripts."
+        ),
+        input_schema=_TARGET_SCHEMA, handler="adaptive", adaptive=True,
+        cmd_template="mantra -ua ReconForge -p $TARGET$",
+        description_hint="signal: js_endpoints",
+        safety_class="low_active",
+    ),
+    "trufflehog": ToolSpec(
+        name="trufflehog", category="adaptive", technique="T1552.001",
+        description=(
+            "Trufflesec TruffleHog — entropy + verified-detector secret "
+            "scanner. Filesystem mode scans a local JS dump; git mode "
+            "scans a clone (use after github_subdomains finds repos)."
+        ),
+        input_schema=_NO_ARGS_SCHEMA, handler="adaptive", adaptive=True,
+        cmd_template="trufflehog filesystem $INPUT_FILE$ --json --no-update",
+        timeout=1200,
+        safety_class="passive",
+    ),
 }
 
 
