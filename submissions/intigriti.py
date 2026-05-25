@@ -1,9 +1,11 @@
 """Intigriti submission formatter.
 
-Intigriti requires the ``X-Intigriti-Username: grover`` header on every
-request to a program target. The Reporter prompts the operator to
-confirm the header is set in the testing tool (Burp / curl) — the
-generated PoC payload section reflects this requirement.
+Intigriti requires the ``X-Intigriti-Username: <handle>`` header on every
+request to a program target. The operator's handle comes from the
+``platform_handle`` field on the program scope (populated during the
+first-run wizard). The Reporter prompts the operator to confirm the
+header is set in the testing tool (Burp / curl) — the generated PoC
+payload section reflects this requirement.
 """
 from __future__ import annotations
 
@@ -14,10 +16,26 @@ from .common import Draft, cvss_meta, cwe, truncate
 
 
 PLATFORM = "intigriti"
-HEADER_HINT = "X-Intigriti-Username: grover"
+
+
+def _header_hint(program: Dict) -> str:
+    """Build the required header from the program's platform_handle.
+
+    Fails loud on missing handle — submitting a report without
+    ``X-Intigriti-Username`` violates Intigriti program rules, and
+    silently inserting a stale default would be worse than crashing.
+    """
+    handle = (program.get("platform_handle") or "").strip()
+    if not handle:
+        raise ValueError(
+            "Intigriti report requires program.platform_handle. "
+            "Run the setup wizard or set it on the program record."
+        )
+    return f"X-Intigriti-Username: {handle}"
 
 
 def format_draft(finding: Dict, program: Dict) -> Draft:
+    header_hint = _header_hint(program)
     vector, score, sev = cvss_meta(finding)
     title = truncate(finding.get("title") or "Untitled finding", 200)
     parts = [
@@ -28,7 +46,7 @@ def format_draft(finding: Dict, program: Dict) -> Draft:
         finding.get("description") or "_Pending operator review._",
         "",
         "### Reproduction Steps",
-        _steps(finding),
+        _steps(finding, header_hint),
         "",
         "### Proof of Concept",
         _poc(finding),
@@ -43,7 +61,7 @@ def format_draft(finding: Dict, program: Dict) -> Draft:
         _remediation(finding),
         "",
         "## Evidence",
-        f"All requests sent with `{HEADER_HINT}` header per program rules.",
+        f"All requests sent with `{header_hint}` header per program rules.",
         "",
         "```json",
         json.dumps(finding.get("evidence", {}), indent=2, default=str),
@@ -57,15 +75,15 @@ def format_draft(finding: Dict, program: Dict) -> Draft:
         weakness=cwe(finding.get("vuln_class", "")),
         cvss_vector=vector,
         cvss_score=score,
-        extra={"required_header": HEADER_HINT},
+        extra={"required_header": header_hint},
     )
 
 
-def _steps(finding: Dict) -> str:
+def _steps(finding: Dict, header_hint: str) -> str:
     ev = finding.get("evidence", {}) or {}
     url = ev.get("endpoint") or ev.get("url") or "the affected endpoint"
     return (
-        f"1. Ensure your testing tool injects `{HEADER_HINT}` on every request.\n"
+        f"1. Ensure your testing tool injects `{header_hint}` on every request.\n"
         f"2. Submit a request to `{url}`.\n"
         f"3. Observe the response — see Evidence section.\n"
     )

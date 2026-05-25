@@ -52,6 +52,7 @@ def vault_dir(tmp_path, monkeypatch):
 _PROGRAM = {
     "name": "acme",
     "platforms": ["hackerone", "intigriti"],
+    "platform_handle": "testhandle",
     "in_scope": [{"type": "domain", "value": "acme.com"}],
     "out_of_scope": [],
 }

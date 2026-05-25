@@ -1,7 +1,7 @@
 {
   "name": "example-program",
   "platform": "intigriti",
-  "platform_handle": "grover",
+  "platform_handle": "<YOUR_HANDLE>",
   "policy_url": "https://app.intigriti.com/programs/example/policy",
   "in_scope": [
     {"type": "domain",         "value": "example.com",                "tier": 1},

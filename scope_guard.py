@@ -15,7 +15,7 @@ Scope JSON format (v1, matches CLAUDE.md doctrine):
     {
       "name": "example",
       "platform": "intigriti",                       # h1|intigriti|bugcrowd|yeswehack|synack
-      "platform_handle": "grover",
+      "platform_handle": "<YOUR_HANDLE>",      # populated by setup wizard
       "policy_url": "https://...",
       "in_scope": [
         {"type": "domain",         "value": "example.com",                "tier": 1},

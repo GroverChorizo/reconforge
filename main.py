@@ -244,6 +244,28 @@ def set_config(key: str, value: Any) -> None:
     db_exec("INSERT OR REPLACE INTO config(key,value) VALUES(?,?)",
             (key, json.dumps(value)))
 
+
+def _seed_config_from_settings() -> None:
+    """Mirror keys from ~/.config/reconforge/settings.json into the DB
+    config table so the web UI's Settings page is pre-populated. The
+    local file remains the source of truth — re-running the wizard
+    updates the file; running the server then re-seeds the DB."""
+    try:
+        from wizard.app import settings_path
+        sp = settings_path()
+        if not sp.exists():
+            return
+        doc = json.loads(sp.read_text(encoding="utf-8"))
+    except Exception as e:
+        emit(f"settings.json seed skipped: {e}", "WARNING", "setup")
+        return
+    for k, v in (doc.get("api_keys") or {}).items():
+        if v:
+            set_config(k, v)
+    idents = doc.get("platform_identities") or {}
+    if idents:
+        set_config("platform_identities", idents)
+
 def add_history(domain: Optional[str], source: str, text: str) -> None:
     db_exec("INSERT INTO history(domain,source,text) VALUES(?,?,?)",
             (domain, source, text))
@@ -3043,12 +3065,35 @@ def main() -> None:
     parser.add_argument("--skip-setup", action="store_true")
     args = parser.parse_args()
 
+    # First-run wizard. Runs BEFORE the server binds and BEFORE init_db
+    # writes anything, so credentials/keys land in
+    # ~/.config/reconforge/settings.json (local file, 0600) and never
+    # touch the web DB. --skip-setup disables for systemd/CI use.
+    if not args.skip_setup:
+        from wizard.app import is_setup_complete, run_text_wizard, settings_path
+        if not is_setup_complete():
+            if not sys.stdin.isatty():
+                print(f"\n[setup] {settings_path()} not found and stdin is "
+                      "not a TTY.\n[setup] Run `python -m wizard` "
+                      "interactively first, or pass --skip-setup to bypass "
+                      "(the app will run but tools will lack identities/keys).\n",
+                      file=sys.stderr)
+                sys.exit(2)
+            print("\n[setup] First run detected — launching setup wizard.")
+            print("[setup] Pass --skip-setup to bypass.\n")
+            run_text_wizard()
+            print("\n[setup] Wizard complete. Starting server…\n")
+
     # Init
     init_db()
     init_tool_gates()
 
     if not args.skip_setup:
         ensure_admin()
+        # Seed the web DB's config table from the local settings file so
+        # the Settings page in the UI is pre-populated. The local file
+        # stays the source of truth for keys; the DB is just a mirror.
+        _seed_config_from_settings()
 
     # Load config into cache
     get_config("max_running_jobs", 5)

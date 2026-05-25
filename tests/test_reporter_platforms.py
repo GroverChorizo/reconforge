@@ -84,8 +84,10 @@ _FINDING = {
     "attack_techniques": ["T1190", "T1552", "T1552.005"],
 }
 
-_PROGRAM = {"name": "acme", "platforms": ["hackerone", "intigriti", "bugcrowd",
-                                          "yeswehack", "synack"]}
+_PROGRAM = {"name": "acme",
+            "platforms": ["hackerone", "intigriti", "bugcrowd",
+                          "yeswehack", "synack"],
+            "platform_handle": "testhandle"}
 
 
 # ═══════════════════════════════════════════════════════════
