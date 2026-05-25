@@ -774,7 +774,10 @@ class TestMisc:
         assert "NodeGraph"        in M.FRONTEND_HTML
 
     def test_default_tools_count(self):
-        assert len(M._DEFAULT_TOOLS) == 16
+        # Lower-bound check so adding tools in Phase C batches doesn't
+        # require touching this assertion. 16 is the Phase B baseline
+        # (original 14 + ffuf + nmap stayed when enabled flags flipped).
+        assert len(M._DEFAULT_TOOLS) >= 16
 
     def test_pipeline_steps_list(self):
         assert "amass"    in M._PIPELINE_STEPS

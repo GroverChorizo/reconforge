@@ -29,6 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir sublist3r theHarvester wafw00f
 # Runtime deps for ReconForge v2 (Phase 4a pinned in pyproject.toml)
 RUN pip install --no-cache-dir psutil "pydantic>=2.6,<3" "claude-agent-sdk>=0.1.0" "textual>=0.60"
+# Phase C Batch 1: BBOT (recursive multi-source subdomain enumeration).
+# pip install is the official path; CLI lands on PATH as `bbot`.
+RUN pip install --no-cache-dir "bbot[all]"
 
 # ── Go tools (single RUN to minimise layers) ───────────────
 ARG GOVERSION=1.22.4
@@ -61,7 +64,9 @@ RUN go install -v github.com/owasp-amass/amass/v4/...@latest          2>/dev/nul
     go install -v github.com/sensepost/gowitness@latest                 2>/dev/null || true && \
     go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest 2>/dev/null || true && \
     go install -v github.com/gwen001/github-subdomains@latest           2>/dev/null || true && \
-    go install -v github.com/ffuf/ffuf/v2@latest                        2>/dev/null || true
+    go install -v github.com/ffuf/ffuf/v2@latest                        2>/dev/null || true && \
+    go install -v github.com/d3mondev/puredns/v2@latest                 2>/dev/null || true && \
+    go install -v github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest 2>/dev/null || true
 
 # ── Findomain ──────────────────────────────────────────────
 RUN set -e; \

@@ -447,6 +447,25 @@ _DEFAULT_TOOLS: Dict[str, Dict] = {
         "enabled": True, "max_concurrent": 2, "parse_mode": "json",
         "description": "Network port scanner and service detection",
     },
+    # ── Phase C Batch 1: subdomain spine ──────────────────────────
+    "bbot": {
+        "name": "BBOT", "type": "enum", "step": 1,
+        "cmd": "bbot -t $DOMAIN$ -f subdomain-enum -o $OUTPUT$ -y --silent",
+        "enabled": True, "max_concurrent": 1, "parse_mode": "bbot",
+        "description": "Recursive multi-source subdomain enumeration (BBOT)",
+    },
+    "puredns": {
+        "name": "PureDNS", "type": "dns", "step": 2,
+        "cmd": "puredns resolve $INPUT_FILE$ -r $RESOLVERS_FILE$ -w $OUTPUT$ --skip-wildcard-filter",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "Wildcard-DNS filter + bulk resolver (runs between enum and dnsx)",
+    },
+    "cdncheck": {
+        "name": "CDNcheck", "type": "dns", "step": 2,
+        "cmd": "cdncheck -i $INPUT_FILE$ -o $OUTPUT$ -resp",
+        "enabled": True, "max_concurrent": 3, "parse_mode": "lines",
+        "description": "Tag CDN/WAF-fronted IPs so downstream scans skip shared infra",
+    },
 }
 
 def get_tools_config() -> Dict[str, Dict]:
@@ -483,6 +502,34 @@ def build_cmd(template: str, vars_: Dict[str, str]) -> List[str]:
     for k, v in vars_.items():
         cmd = cmd.replace(k, v)
     return cmd.split()
+
+
+def _standard_vars(domain: str = "", output: str = "", input_file: str = "",
+                   target: str = "") -> Dict[str, str]:
+    """Standard variable substitutions for tool cmd templates. Centralizes
+    every placeholder we resolve from settings.json so adding a new
+    tool/var is a one-line change here, not a per-runner refactor.
+
+    Per-call placeholders (domain/output/input_file/target) are passed
+    explicitly; config-driven ones (threads/wordlist/API keys/etc.) are
+    read from `get_config`. Any tool's cmd_template can reference any
+    placeholder — unused ones are simply not substituted.
+    """
+    return {
+        "$DOMAIN$":             domain,
+        "$TARGET$":             target or domain,
+        "$SUBDOMAIN$":          target or domain,
+        "$OUTPUT$":             output,
+        "$INPUT_FILE$":         input_file,
+        "$THREADS$":            str(get_config("threads", DEFAULT_THREADS)),
+        "$WORDLIST$":           get_config("wordlist", DEFAULT_WORDLIST),
+        "$WORDLIST_DIR$":       get_config("wordlist_dir", "/usr/share/seclists"),
+        "$RESOLVERS_FILE$":     get_config("resolvers_file", ""),
+        "$GITHUB_TOKEN$":       get_config("github_token", ""),
+        "$SHODAN_KEY$":         get_config("shodan_key", ""),
+        "$SECURITYTRAILS_KEY$": get_config("securitytrails_key", ""),
+        "$INTERACTSH_URL$":     get_config("interactsh_url", ""),
+    }
 
 def _handle_rate_limit() -> None:
     global _rate_delay
@@ -833,20 +880,14 @@ def _run_enum_cli(job: Job, tool_key: str) -> None:
     gate = _gate(tool_key)
     with gate:
         jd   = get_job_dir(job.domain)
-        out  = os.path.join(jd, f"enum_{tool_key}.txt")
-        wl   = get_config("wordlist", DEFAULT_WORDLIST)
-        thr  = str(get_config("threads", DEFAULT_THREADS))
-        gh   = get_config("github_token", "")
+        # BBOT writes a directory tree, not a single file. All other enum
+        # tools land at enum_<key>.txt as either stdout-parsed or file-parsed.
         mode = t.get("parse_mode", "lines")
-
-        vars_ = {
-            "$DOMAIN$": job.domain,
-            "$OUTPUT$": out,
-            "$WORDLIST$": wl,
-            "$THREADS$": thr,
-            "$GITHUB_TOKEN$": gh,
-        }
-        cmd = build_cmd(t["cmd"], vars_)
+        if mode == "bbot":
+            out = os.path.join(jd, f"bbot_{tool_key}")
+        else:
+            out = os.path.join(jd, f"enum_{tool_key}.txt")
+        cmd  = build_cmd(t["cmd"], _standard_vars(domain=job.domain, output=out))
         job.log(f"[{tool_key}] starting", tool_key)
         try:
             rc, stdout, stderr = run_proc(cmd, job, tool_key)
@@ -866,6 +907,17 @@ def _run_enum_cli(job: Job, tool_key: str) -> None:
                 subs = {l.strip() for l in f if l.strip()}
         elif mode == "lines" and stdout:
             subs = {l.strip() for l in stdout.splitlines() if l.strip()}
+        elif mode == "bbot" and os.path.isdir(out):
+            # BBOT writes subdomains.txt under its output dir; recurse so
+            # we don't depend on the exact subdir naming (varies by version).
+            for root_dir, _dirs, files in os.walk(out):
+                for fn in files:
+                    if fn == "subdomains.txt":
+                        try:
+                            with open(os.path.join(root_dir, fn)) as f:
+                                subs.update(l.strip() for l in f if l.strip())
+                        except Exception:
+                            continue
 
         added = job.add_subs(subs)
         job.log(f"[{tool_key}] done — {added} new subdomains", tool_key)

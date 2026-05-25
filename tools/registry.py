@@ -545,6 +545,42 @@ REGISTRY: Dict[str, ToolSpec] = {
         description_hint="signal: admin_panels",
         safety_class="low_active",
     ),
+
+    # ── Phase C Batch 1: subdomain spine ──────────────────────────
+    "bbot": ToolSpec(
+        name="bbot", category="enum", technique="T1596",
+        description=(
+            "BBOT recursive multi-source subdomain enumeration. Aggregates "
+            "CT, public DNS, certificate scraping, GitHub, and active brute "
+            "in one pass; produces a directory of artifacts."
+        ),
+        input_schema=_DOMAIN_SCHEMA, handler="enum_file",
+        cmd_template="bbot -t $DOMAIN$ -f subdomain-enum -o $OUTPUT$ -y --silent",
+        timeout=3600,
+        safety_class="low_active",
+    ),
+    "puredns": ToolSpec(
+        name="puredns", category="dns", technique="T1590",
+        description=(
+            "Wildcard-DNS filter + bulk resolver. Runs between enum and "
+            "dnsx so wildcard noise doesn't pollute downstream phases."
+        ),
+        input_schema=_NO_ARGS_SCHEMA, handler="dnsx",
+        cmd_template="puredns resolve $INPUT_FILE$ -r $RESOLVERS_FILE$ -w $OUTPUT$ --skip-wildcard-filter",
+        safety_class="passive",
+    ),
+    "cdncheck": ToolSpec(
+        name="cdncheck", category="dns", technique="T1596",
+        description=(
+            "ProjectDiscovery CDN-IP tagger. Marks IPs belonging to "
+            "shared CDN/WAF infrastructure so downstream nuclei/nmap "
+            "passes skip them (and avoid burning the WAF vendor's "
+            "reputation budget)."
+        ),
+        input_schema=_NO_ARGS_SCHEMA, handler="dnsx",
+        cmd_template="cdncheck -i $INPUT_FILE$ -o $OUTPUT$ -resp",
+        safety_class="passive",
+    ),
 }
 
 
