@@ -2157,7 +2157,7 @@ load();
 # ═══════════════════════════════════════════════════════════
 #  FRONTEND SPA  (single-page app, cyberpunk theme)
 # ═══════════════════════════════════════════════════════════
-FRONTEND_HTML = """<!DOCTYPE html>
+FRONTEND_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
