@@ -535,6 +535,19 @@ _DEFAULT_TOOLS: Dict[str, Dict] = {
         "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
         "description": "BishopFox Swagger/OpenAPI spec scraper",
     },
+    # ── Phase C Batch 5: cloud ────────────────────────────────────
+    "cloudfox": {
+        "name": "CloudFox", "type": "cloud", "step": 6,
+        "cmd": "cloudfox aws all-checks --profile $AWS_PROFILE$ -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 1, "parse_mode": "stdout",
+        "description": "BishopFox CloudFox — AWS post-exploitation enumeration",
+    },
+    "s3scanner": {
+        "name": "S3Scanner", "type": "cloud", "step": 6,
+        "cmd": "s3scanner scan -b $TARGET$",
+        "enabled": True, "max_concurrent": 3, "parse_mode": "stdout",
+        "description": "S3 / GCS / Azure bucket public-access probe",
+    },
 }
 
 def get_tools_config() -> Dict[str, Dict]:
@@ -598,6 +611,7 @@ def _standard_vars(domain: str = "", output: str = "", input_file: str = "",
         "$SHODAN_KEY$":         get_config("shodan_key", ""),
         "$SECURITYTRAILS_KEY$": get_config("securitytrails_key", ""),
         "$INTERACTSH_URL$":     get_config("interactsh_url", ""),
+        "$AWS_PROFILE$":        get_config("aws_profile", "default"),
     }
 
 def _handle_rate_limit() -> None:

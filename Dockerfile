@@ -72,7 +72,9 @@ RUN go install -v github.com/owasp-amass/amass/v4/...@latest          2>/dev/nul
     go install -v github.com/BishopFox/jsluice/cmd/jsluice@latest       2>/dev/null || true && \
     go install -v github.com/brosck/mantra@latest                       2>/dev/null || true && \
     go install -v github.com/trufflesecurity/trufflehog/v3@latest       2>/dev/null || true && \
-    go install -v github.com/BishopFox/swagger-jacker@latest            2>/dev/null || true
+    go install -v github.com/BishopFox/swagger-jacker@latest            2>/dev/null || true && \
+    go install -v github.com/BishopFox/cloudfox@latest                  2>/dev/null || true && \
+    go install -v github.com/sa7mon/s3scanner@latest                    2>/dev/null || true
 
 # Phase C Batch 4: GraphQL/API spec tools via pip (Python-based).
 RUN pip install --no-cache-dir graphw00f clairvoyance inql

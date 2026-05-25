@@ -682,6 +682,24 @@ REGISTRY: Dict[str, ToolSpec] = {
         description_hint="signal: swagger_endpoints",
         safety_class="low_active",
     ),
+
+    # ── Phase C Batch 5: cloud (s3scanner already exists above as
+    #    a Phase 14 adaptive entry; CloudFox is new) ──────────────
+    "cloudfox": ToolSpec(
+        name="cloudfox", category="adaptive", technique="T1580",
+        description=(
+            "BishopFox CloudFox — AWS post-exploitation enumeration. "
+            "Requires an AWS profile in ~/.aws/credentials; runs "
+            "all-checks (IAM, S3, EC2, Lambda, RDS, Secrets Manager, "
+            "etc.) and emits a per-service findings report. Use after "
+            "credentials surface via TruffleHog / mantra."
+        ),
+        input_schema=_NO_ARGS_SCHEMA, handler="adaptive", adaptive=True,
+        cmd_template="cloudfox aws all-checks --profile $AWS_PROFILE$ -o $OUTPUT$",
+        description_hint="signal: aws_credentials",
+        timeout=3600,
+        safety_class="low_active",
+    ),
 }
 
 
