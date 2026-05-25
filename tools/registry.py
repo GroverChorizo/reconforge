@@ -581,6 +581,55 @@ REGISTRY: Dict[str, ToolSpec] = {
         cmd_template="cdncheck -i $INPUT_FILE$ -o $OUTPUT$ -resp",
         safety_class="passive",
     ),
+
+    # ── Phase C Batch 2: HTTP exploration ─────────────────────────
+    "katana": ToolSpec(
+        name="katana", category="adaptive", technique="T1595",
+        description=(
+            "Headless SPA-aware crawler. Extracts JS, follows form "
+            "actions, and emits a per-host URL inventory that downstream "
+            "JS-analysis tools (jsluice/mantra/TruffleHog) consume."
+        ),
+        input_schema=_TARGET_SCHEMA, handler="adaptive", adaptive=True,
+        cmd_template="katana -u $TARGET$ -o $OUTPUT$ -d 3 -jc -silent",
+        timeout=1200,
+        safety_class="low_active",
+    ),
+    "feroxbuster": ToolSpec(
+        name="feroxbuster", category="adaptive", technique="T1595.003",
+        description=(
+            "Rust recursive content-discovery scanner. Heavier traffic "
+            "than ffuf — gate behind explicit operator opt-in for any "
+            "program with throttling rules."
+        ),
+        input_schema=_TARGET_SCHEMA, handler="adaptive", adaptive=True,
+        cmd_template="feroxbuster -u https://$TARGET$ -w $WORDLIST$ -o $OUTPUT$ --silent --no-state",
+        timeout=1800,
+        safety_class="mod_active",
+    ),
+    "x8": ToolSpec(
+        name="x8", category="adaptive", technique="T1595.002",
+        description=(
+            "Hidden HTTP parameter discovery. Run after katana surfaces "
+            "endpoints; chain with payload-injection probes."
+        ),
+        input_schema=_TARGET_SCHEMA, handler="adaptive", adaptive=True,
+        cmd_template="x8 -u https://$TARGET$ -w $WORDLIST$ -o $OUTPUT$ --output-format url",
+        timeout=1200,
+        safety_class="mod_active",
+    ),
+    "kiterunner": ToolSpec(
+        name="kiterunner", category="adaptive", technique="T1595.002",
+        description=(
+            "Assetnote Swagger/OpenAPI corpus brute. The 67k-spec "
+            "routes-large.kite wordlist is the default; smaller "
+            "kite files (routes-small.kite) for low-throttle targets."
+        ),
+        input_schema=_TARGET_SCHEMA, handler="adaptive", adaptive=True,
+        cmd_template="kr scan https://$TARGET$ -w $WORDLIST_DIR$/routes-large.kite -o $OUTPUT$",
+        timeout=2400,
+        safety_class="mod_active",
+    ),
 }
 
 

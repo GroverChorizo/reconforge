@@ -466,6 +466,31 @@ _DEFAULT_TOOLS: Dict[str, Dict] = {
         "enabled": True, "max_concurrent": 3, "parse_mode": "lines",
         "description": "Tag CDN/WAF-fronted IPs so downstream scans skip shared infra",
     },
+    # ── Phase C Batch 2: HTTP exploration ─────────────────────────
+    "katana": {
+        "name": "Katana", "type": "crawl", "step": 4,
+        "cmd": "katana -u $TARGET$ -o $OUTPUT$ -d 3 -jc -silent",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "Headless SPA-aware crawler with JS extraction (depth-3 default)",
+    },
+    "feroxbuster": {
+        "name": "Feroxbuster", "type": "content", "step": 8,
+        "cmd": "feroxbuster -u https://$TARGET$ -w $WORDLIST$ -o $OUTPUT$ --silent --no-state",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "Recursive content discovery (Rust ffuf cousin)",
+    },
+    "x8": {
+        "name": "x8", "type": "fuzz", "step": 8,
+        "cmd": "x8 -u https://$TARGET$ -w $WORDLIST$ -o $OUTPUT$ --output-format url",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "Hidden HTTP parameter discovery",
+    },
+    "kiterunner": {
+        "name": "Kiterunner", "type": "api", "step": 8,
+        "cmd": "kr scan https://$TARGET$ -w $WORDLIST_DIR$/routes-large.kite -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "Swagger/OpenAPI corpus brute (67k+ spec routes)",
+    },
 }
 
 def get_tools_config() -> Dict[str, Dict]:
