@@ -510,7 +510,7 @@ REGISTRY: Dict[str, ToolSpec] = {
             "introspection is disabled."
         ),
         input_schema=_TARGET_SCHEMA, handler="adaptive", adaptive=True,
-        cmd_template="clairvoyance $TARGET$ -o schema.json",
+        cmd_template="clairvoyance $TARGET$ -o $OUTPUT$",
         description_hint="signal: graphql_endpoints",
         timeout=1200,
         safety_class="mod_active",
@@ -665,6 +665,22 @@ REGISTRY: Dict[str, ToolSpec] = {
         cmd_template="trufflehog filesystem $INPUT_FILE$ --json --no-update",
         timeout=1200,
         safety_class="passive",
+    ),
+
+    # ── Phase C Batch 4: API / protocol (swagger-jacker only; the
+    #    other three — graphw00f, clairvoyance, inql — already exist
+    #    above as Phase 14 adaptive entries.) ──────────────────────
+    "swagger_jacker": ToolSpec(
+        name="swagger_jacker", category="adaptive", technique="T1213.003",
+        description=(
+            "BishopFox swagger-jacker — scrape Swagger/OpenAPI spec files "
+            "from a target. Often finds /v2/api-docs, /swagger.json, and "
+            "developer-portal exposures that kiterunner can then brute."
+        ),
+        input_schema=_DOMAIN_SCHEMA, handler="adaptive", adaptive=True,
+        cmd_template="swagger-jacker -d $DOMAIN$ -o $OUTPUT$",
+        description_hint="signal: swagger_endpoints",
+        safety_class="low_active",
     ),
 }
 

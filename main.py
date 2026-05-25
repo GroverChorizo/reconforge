@@ -510,6 +510,31 @@ _DEFAULT_TOOLS: Dict[str, Dict] = {
         "enabled": True, "max_concurrent": 2, "parse_mode": "jsonl",
         "description": "High-entropy + regex secret scanner (filesystem mode)",
     },
+    # ── Phase C Batch 4: API / protocol ───────────────────────────
+    "graphw00f": {
+        "name": "graphw00f", "type": "api", "step": 5,
+        "cmd": "graphw00f -t $TARGET$ -d",
+        "enabled": True, "max_concurrent": 3, "parse_mode": "stdout",
+        "description": "GraphQL engine fingerprinter (Apollo, Hasura, etc.)",
+    },
+    "clairvoyance": {
+        "name": "Clairvoyance", "type": "api", "step": 5,
+        "cmd": "clairvoyance $TARGET$ -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "json",
+        "description": "Reconstruct GraphQL schema when introspection is off",
+    },
+    "inql": {
+        "name": "InQL", "type": "api", "step": 5,
+        "cmd": "inql -t $TARGET$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "stdout",
+        "description": "InQL GraphQL query/mutation enumerator",
+    },
+    "swagger_jacker": {
+        "name": "Swagger-Jacker", "type": "api", "step": 5,
+        "cmd": "swagger-jacker -d $DOMAIN$ -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "BishopFox Swagger/OpenAPI spec scraper",
+    },
 }
 
 def get_tools_config() -> Dict[str, Dict]:
