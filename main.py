@@ -51,7 +51,8 @@ SESSION_TTL        = 86_400
 PBKDF2_ITERS       = 100_000
 SALT_BYTES         = 32
 HARVEST_INTERVAL   = 30
-FIRST_SUB_TIMEOUT  = 300
+FIRST_SUB_TIMEOUT  = 600  # wall-clock fallback; overridable via settings.json:first_sub_timeout
+MIN_ENUM_TOOLS_REQUIRED = 2  # don't abort until at least N enum tools have completed-or-failed
 RESOURCE_INTERVAL  = 5
 RESOURCE_RETENTION = 3_600
 DYNAMIC_INTERVAL   = 30
@@ -580,6 +581,10 @@ class Job:
         self._logs: deque             = deque(maxlen=500)
         self._log_lock   = threading.Lock()
         self._thread: Optional[threading.Thread] = None
+        # Per-tool outcome tracking. Each entry: {status, subs, error?}.
+        # status ∈ {ok, disabled, missing, rate-limited, timeout, error, skipped}.
+        self.tool_results: Dict[str, Dict] = {}
+        self._tr_lock     = threading.Lock()
 
     # — subdomain tracking ——————————————————————————
     def add_subs(self, subs: Set[str]) -> int:
@@ -632,10 +637,38 @@ class Job:
     def skip(self, step: str) -> None:
         self.skipped_steps.add(step)
 
+    # — per-tool outcome ————————————————————————————
+    def record_tool_result(self, key: str, status: str,
+                           subs: int = 0, error: Optional[str] = None) -> None:
+        with self._tr_lock:
+            self.tool_results[key] = {"status": status, "subs": subs}
+            if error:
+                self.tool_results[key]["error"] = error
+
+    def enum_completed_count(self, enum_keys: List[str]) -> int:
+        with self._tr_lock:
+            return sum(1 for k in enum_keys if k in self.tool_results)
+
+    def enum_summary(self, enum_keys: List[str]) -> str:
+        """One-line summary: 'subfinder→47, crtsh→0 (rate-limited), amass→pending'."""
+        with self._tr_lock:
+            parts = []
+            for k in enum_keys:
+                r = self.tool_results.get(k)
+                if r is None:
+                    parts.append(f"{k}→pending")
+                elif r["status"] == "ok":
+                    parts.append(f"{k}→{r['subs']}")
+                else:
+                    parts.append(f"{k}→0 ({r['status']})")
+            return ", ".join(parts)
+
     def should_skip(self, step: str) -> bool:
         return step in self.skipped_steps
 
     def to_dict(self) -> Dict:
+        with self._tr_lock:
+            tr_snapshot = dict(self.tool_results)
         return {
             "id": self.id,
             "domain": self.domain,
@@ -649,6 +682,7 @@ class Job:
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "error": self.error,
+            "tool_results": tr_snapshot,
             "logs": self.get_logs()[-20:],
         }
 
@@ -784,9 +818,14 @@ def _harvest_loop(job: Job) -> None:
 def _run_enum_cli(job: Job, tool_key: str) -> None:
     """Run an enumeration tool that writes to a file or stdout."""
     t = get_tool(tool_key)
-    if not t.get("enabled") or not is_tool_available(tool_key):
+    if not t.get("enabled"):
+        job.record_tool_result(tool_key, "disabled")
+        return
+    if not is_tool_available(tool_key):
+        job.record_tool_result(tool_key, "missing")
         return
     if job.should_skip(tool_key) or job.is_done(tool_key):
+        job.record_tool_result(tool_key, "skipped")
         return
     if job.cancel_event.is_set():
         return
@@ -809,7 +848,12 @@ def _run_enum_cli(job: Job, tool_key: str) -> None:
         }
         cmd = build_cmd(t["cmd"], vars_)
         job.log(f"[{tool_key}] starting", tool_key)
-        rc, stdout, stderr = run_proc(cmd, job, tool_key)
+        try:
+            rc, stdout, stderr = run_proc(cmd, job, tool_key)
+        except Exception as e:
+            job.log(f"[{tool_key}] error: {e}", tool_key, "WARNING")
+            job.record_tool_result(tool_key, "error", error=str(e))
+            return
 
         subs: Set[str] = set()
         if mode == "stdout":
@@ -825,22 +869,28 @@ def _run_enum_cli(job: Job, tool_key: str) -> None:
 
         added = job.add_subs(subs)
         job.log(f"[{tool_key}] done — {added} new subdomains", tool_key)
+        job.record_tool_result(tool_key, "ok", subs=added)
         job.mark_step(tool_key)
 
 def _run_crtsh(job: Job) -> None:
     """Query crt.sh certificate transparency API."""
     if job.should_skip("crtsh") or job.is_done("crtsh"):
+        job.record_tool_result("crtsh", "skipped")
         return
     if not get_tool("crtsh").get("enabled", True):
+        job.record_tool_result("crtsh", "disabled")
         return
 
     gate = _gate("crtsh")
     with gate:
         if not _sleep_rate(job):
+            job.record_tool_result("crtsh", "rate-limited")
             return
         job.log("[crtsh] querying crt.sh", "crtsh")
         url = f"https://crt.sh/?q=%.{job.domain}&output=json"
         subs: Set[str] = set()
+        status = "ok"
+        err: Optional[str] = None
         try:
             req = urllib.request.Request(
                 url, headers={"User-Agent": f"{APP_NAME}/{VERSION}"})
@@ -855,12 +905,19 @@ def _run_crtsh(job: Job) -> None:
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 _handle_rate_limit()
+                status = "rate-limited"
+            else:
+                status = "error"
+            err = f"HTTP {e.code}"
             job.log(f"[crtsh] HTTP {e.code}", "crtsh", "WARNING")
         except Exception as e:
+            status = "error"
+            err = str(e)
             job.log(f"[crtsh] error: {e}", "crtsh", "WARNING")
 
         added = job.add_subs(subs)
         job.log(f"[crtsh] done — {added} subdomains", "crtsh")
+        job.record_tool_result("crtsh", status, subs=added, error=err)
         job.mark_step("crtsh")
 
 # ── DNS resolution (step 2) ─────────────────────────────────
@@ -1132,10 +1189,41 @@ def run_pipeline(job: Job) -> None:
 
         enum_keys = ["amass","subfinder","assetfinder","findomain",
                      "sublist3r","crtsh","github_subdomains","theharvester"]
+
+        # Pre-flight tool availability audit. Surface missing-binary problems
+        # up front so the user sees one banner instead of a silent abort.
+        avail: List[str] = []
+        unavail: List[str] = []
+        skip_set: Set[str] = set()
+        for key in enum_keys:
+            t = get_tool(key)
+            if not t.get("enabled"):
+                unavail.append(f"{key} (disabled)")
+                skip_set.add(key)
+                job.record_tool_result(key, "disabled")
+                continue
+            if not is_tool_available(key):
+                unavail.append(f"{key} (not installed)")
+                skip_set.add(key)
+                job.record_tool_result(key, "missing")
+                job.log(f"MISSING TOOL: {key} — binary not on PATH", "pipeline", "WARNING")
+                continue
+            avail.append(key)
+        if unavail:
+            job.log(
+                f"Enum tools: {len(avail)} available ({', '.join(avail) or 'none'}), "
+                f"{len(unavail)} unavailable ({', '.join(unavail)}). "
+                f"Run installer/install.sh to fix missing binaries.",
+                "pipeline", "WARNING")
+        else:
+            job.log(f"Enum tools: all {len(avail)} available", "pipeline")
+
         enum_threads = []
         for key in enum_keys:
             if job.cancel_event.is_set():
                 break
+            if key in skip_set:
+                continue
             t = threading.Thread(
                 target=(_run_crtsh if key == "crtsh" else _run_enum_cli),
                 args=(job,) if key == "crtsh" else (job, key),
@@ -1150,16 +1238,46 @@ def run_pipeline(job: Job) -> None:
                                      daemon=True, name=f"harvest-{job.id}")
         harvest_t.start()
 
-        # Wait for first subdomain
-        triggered = job.first_sub_event.wait(timeout=FIRST_SUB_TIMEOUT)
+        # Wait for first subdomain. Don't abort on wall-clock alone — give the
+        # tools a chance to finish-or-fail (at least min_enum_tools_required of
+        # them). Hardened targets like Rivian can take >5 minutes for amass
+        # passive mode to return anything useful.
+        timeout = int(get_config("first_sub_timeout", FIRST_SUB_TIMEOUT))
+        min_req = int(get_config("min_enum_tools_required", MIN_ENUM_TOOLS_REQUIRED))
+        deadline = time.time() + timeout
+        triggered = False
+        while True:
+            if job.first_sub_event.wait(timeout=5):
+                triggered = True
+                break
+            if job.cancel_event.is_set():
+                break
+            past_deadline = time.time() >= deadline
+            completed = job.enum_completed_count(enum_keys)
+            if past_deadline and completed >= min_req:
+                break
+            # If every launched enum thread has finished and still no subs,
+            # there is nothing more to wait for — abort early instead of
+            # burning the rest of the wall-clock timeout.
+            if all(not t.is_alive() for t in enum_threads):
+                break
         if not triggered:
-            job.log("No subdomains found within timeout — aborting", "pipeline", "WARNING")
+            summary = job.enum_summary(enum_keys)
+            job.log(
+                f"No subdomains discovered. Enum results: {summary}. "
+                f"Common causes: enum binaries not installed, crt.sh rate-limit, "
+                f"WAF blocking, or target has no public subdomains.",
+                "pipeline", "WARNING")
             job.cancel_event.set()
             for t in enum_threads:
                 t.join(timeout=5)
             _complete_job(job, "failed")
             job.error = "No subdomains discovered"
             return
+
+        # Got at least one subdomain — log the partial result tally so the
+        # operator can see which tools contributed.
+        job.log(f"Enum partial results: {job.enum_summary(enum_keys)}", "pipeline")
 
         if job.cancel_event.is_set():
             _complete_job(job, "cancelled")
