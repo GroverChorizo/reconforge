@@ -2357,12 +2357,12 @@ hr{border:none;border-top:1px solid var(--border);margin:12px 0}
 <!-- Login screen -->
 <div id="lscreen" style="position:fixed;inset:0;background:var(--bg);
   display:flex;align-items:center;justify-content:center;z-index:900">
-  <form onsubmit="doLogin(event)" style="background:var(--card);border:1px solid var(--border);
+  <form onsubmit="event.preventDefault(); doLogin(event); return false;" action="javascript:void(0)" style="background:var(--card);border:1px solid var(--border);
     border-radius:8px;padding:36px 32px;min-width:320px;max-width:380px;width:90%;text-align:center">
     <div style="font-size:22px;font-weight:700;color:var(--green);letter-spacing:3px;margin-bottom:4px;text-shadow:var(--gg)">RECON<span style="color:var(--cyan)">FORGE</span></div>
     <div style="color:var(--text2);font-size:11px;margin-bottom:28px">Security Reconnaissance Platform</div>
-    <div class="fg" style="text-align:left"><label class="fl">Username</label><input id="l-user" autocomplete="username" placeholder="admin"></div>
-    <div class="fg" style="text-align:left"><label class="fl">Password</label><input id="l-pass" type="password" autocomplete="current-password"></div>
+    <div class="fg" style="text-align:left"><label class="fl">Username</label><input id="l-user" name="username" autocomplete="username" placeholder="admin"></div>
+    <div class="fg" style="text-align:left"><label class="fl">Password</label><input id="l-pass" name="password" type="password" autocomplete="current-password"></div>
     <div id="l-err" style="color:var(--red);font-size:12px;min-height:18px;margin-bottom:10px"></div>
     <button type="submit" class="btn btn-g" style="width:100%;padding:10px">&#9654; Login</button>
   </form>
