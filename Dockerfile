@@ -79,6 +79,54 @@ RUN go install -v github.com/owasp-amass/amass/v4/...@latest          2>/dev/nul
 # Phase C Batch 4: GraphQL/API spec tools via pip (Python-based).
 RUN pip install --no-cache-dir graphw00f clairvoyance inql
 
+# ─── Playbook catalog (Stage Aleph, 2026-05-27) ──────────────────
+# ProjectDiscovery extras + Tomnomnom utility chain + specialty tools
+# referenced by the docs/RECON_PLAYBOOK.md master pipeline.
+RUN go install -v github.com/projectdiscovery/chaos-client/cmd/chaos@latest             2>/dev/null || true && \
+    go install -v github.com/projectdiscovery/shuffledns/cmd/shuffledns@latest          2>/dev/null || true && \
+    go install -v github.com/projectdiscovery/mapcidr/cmd/mapcidr@latest                2>/dev/null || true && \
+    go install -v github.com/projectdiscovery/tlsx/cmd/tlsx@latest                      2>/dev/null || true && \
+    go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest                 2>/dev/null || true && \
+    go install -v github.com/projectdiscovery/alterx/cmd/alterx@latest                  2>/dev/null || true && \
+    go install -v github.com/projectdiscovery/notify/cmd/notify@latest                  2>/dev/null || true && \
+    go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest   2>/dev/null || true && \
+    go install -v github.com/projectdiscovery/uncover/cmd/uncover@latest                2>/dev/null || true && \
+    go install -v github.com/lc/gau/v2/cmd/gau@latest                                   2>/dev/null || true && \
+    go install -v github.com/tomnomnom/waybackurls@latest                               2>/dev/null || true && \
+    go install -v github.com/tomnomnom/anew@latest                                      2>/dev/null || true && \
+    go install -v github.com/tomnomnom/unfurl@latest                                    2>/dev/null || true && \
+    go install -v github.com/tomnomnom/qsreplace@latest                                 2>/dev/null || true && \
+    go install -v github.com/tomnomnom/gf@latest                                        2>/dev/null || true && \
+    go install -v github.com/hakluke/hakrawler@latest                                   2>/dev/null || true && \
+    go install -v github.com/hahwul/dalfox/v2@latest                                    2>/dev/null || true && \
+    go install -v github.com/dwisiswant0/crlfuzz/cmd/crlfuzz@latest                     2>/dev/null || true && \
+    go install -v github.com/KathanP19/Gxss@latest                                      2>/dev/null || true && \
+    go install -v github.com/lc/subjs@latest                                            2>/dev/null || true && \
+    go install -v github.com/denandz/sourcemapper@latest                                2>/dev/null || true && \
+    go install -v github.com/Josue87/gotator@latest                                     2>/dev/null || true && \
+    go install -v github.com/resyncgg/ripgen@latest                                     2>/dev/null || true
+
+# Python-based: arjun, paramspider, sqlmap, dirsearch, dnsgen, dnsvalidator, SecretFinder
+RUN pip install --no-cache-dir arjun paramspider sqlmap dirsearch dnsgen dnsvalidator && \
+    git clone --depth 1 https://github.com/m4ll0k/SecretFinder.git /opt/SecretFinder 2>/dev/null || true && \
+    ln -sf /opt/SecretFinder/SecretFinder.py /usr/local/bin/SecretFinder 2>/dev/null || true && \
+    chmod +x /usr/local/bin/SecretFinder 2>/dev/null || true
+
+# masscan via apt (avoids the build-from-source dance)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    masscan gobuster \
+  && rm -rf /var/lib/apt/lists/*
+
+# hacker-scoper via Go
+RUN go install -v github.com/ItsIgnacioPortal/hacker-scoper/v4/cmd/hacker-scoper@latest 2>/dev/null || true
+
+# gf-patterns (the actual pattern packs gf relies on)
+RUN git clone --depth 1 https://github.com/tomnomnom/gf.git /opt/gf-helpers 2>/dev/null || true && \
+    git clone --depth 1 https://github.com/1ndianl33t/Gf-Patterns.git /opt/gf-patterns 2>/dev/null || true && \
+    mkdir -p /root/.gf && \
+    cp /opt/gf-helpers/examples/*.json /root/.gf/ 2>/dev/null || true && \
+    cp /opt/gf-patterns/*.json /root/.gf/ 2>/dev/null || true
+
 # Phase C Batch 2: Rust-based HTTP exploration tools (feroxbuster, x8).
 # Installed via cargo so they pick up musl-friendly builds.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable

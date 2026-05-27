@@ -548,6 +548,210 @@ _DEFAULT_TOOLS: Dict[str, Dict] = {
         "enabled": True, "max_concurrent": 3, "parse_mode": "stdout",
         "description": "S3 / GCS / Azure bucket public-access probe",
     },
+
+    # ════════════════════════════════════════════════════════════════
+    #  Operator-research catalog (Playbook-driven additions, 2026-05-27)
+    # ════════════════════════════════════════════════════════════════
+
+    # ── PD stack additions ────────────────────────────────────────
+    "chaos": {
+        "name": "Chaos", "type": "enum", "step": 1,
+        "cmd": "chaos -d $DOMAIN$ -silent -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 3, "parse_mode": "lines",
+        "description": "ProjectDiscovery bug-bounty subdomain DB (requires CHAOS_KEY)",
+    },
+    "shuffledns": {
+        "name": "ShuffleDNS", "type": "dns", "step": 2,
+        "cmd": "shuffledns -d $DOMAIN$ -w $WORDLIST$ -r $RESOLVERS_FILE$ -mode bruteforce -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 1, "parse_mode": "lines",
+        "description": "massdns wrapper — wildcard-aware bruteforce + resolve",
+    },
+    "mapcidr": {
+        "name": "MapCIDR", "type": "dns", "step": 2,
+        "cmd": "mapcidr -cidr $TARGET$ -silent -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 3, "parse_mode": "lines",
+        "description": "CIDR expander / aggregator / ASN→IP-range resolver",
+    },
+    "tlsx": {
+        "name": "TLSx", "type": "tls", "step": 3,
+        "cmd": "tlsx -l $INPUT_FILE$ -san -cn -silent -resp-only -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "TLS SAN/CN harvest + cert misconfig surface",
+    },
+    "naabu": {
+        "name": "Naabu", "type": "port_scan", "step": 4,
+        "cmd": "naabu -l $INPUT_FILE$ -tp 1000 -silent -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 1, "parse_mode": "lines",
+        "description": "ProjectDiscovery fast port scanner (Go) — top-1000 by default",
+    },
+    "alterx": {
+        "name": "AlterX", "type": "enum", "step": 1,
+        "cmd": "alterx -enrich -l $INPUT_FILE$ -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 3, "parse_mode": "lines",
+        "description": "DSL-based subdomain permutation generator",
+    },
+    "notify": {
+        "name": "Notify", "type": "alert", "step": 20,
+        "cmd": "notify -bulk -data $INPUT_FILE$",
+        "enabled": True, "max_concurrent": 3, "parse_mode": "stdout",
+        "description": "ProjectDiscovery multi-provider alert relay (Slack/Discord/etc)",
+    },
+    "interactsh": {
+        "name": "Interactsh-Client", "type": "oob", "step": 13,
+        "cmd": "interactsh-client -n 5 -server oast.pro -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 1, "parse_mode": "lines",
+        "description": "OOB callback receiver for blind SSRF/RCE/SQLi confirmation",
+    },
+    "uncover": {
+        "name": "Uncover", "type": "enum", "step": 1,
+        "cmd": "uncover -q $TARGET$ -silent -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "Search-engine-driven asset discovery (Shodan/Censys/FOFA/etc)",
+    },
+
+    # ── Tomnomnom utility chain ──────────────────────────────────
+    "gau": {
+        "name": "gau", "type": "archive", "step": 9,
+        "cmd": "gau --subs --threads $THREADS$ $DOMAIN$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "stdout",
+        "description": "URL history harvest from Wayback / CommonCrawl / OTX",
+    },
+    "waybackurls": {
+        "name": "waybackurls", "type": "archive", "step": 9,
+        "cmd": "waybackurls $DOMAIN$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "stdout",
+        "description": "Tomnomnom Wayback URL extractor",
+    },
+    "anew": {
+        "name": "anew", "type": "util", "step": 0,
+        "cmd": "anew $OUTPUT$",
+        "enabled": True, "max_concurrent": 10, "parse_mode": "stdout",
+        "description": "Pipe filter: dedupe + append-only-new (stdout = new lines)",
+    },
+    "unfurl": {
+        "name": "unfurl", "type": "util", "step": 0,
+        "cmd": "unfurl -u keys",
+        "enabled": True, "max_concurrent": 10, "parse_mode": "stdout",
+        "description": "URL parser pipe: domains | paths | keys | values | keypairs",
+    },
+    "qsreplace": {
+        "name": "qsreplace", "type": "util", "step": 12,
+        "cmd": "qsreplace $TARGET$",
+        "enabled": True, "max_concurrent": 10, "parse_mode": "stdout",
+        "description": "Replace every query-string value with a payload (pipe filter)",
+    },
+    "gf": {
+        "name": "gf", "type": "util", "step": 11,
+        "cmd": "gf $TARGET$",
+        "enabled": True, "max_concurrent": 10, "parse_mode": "stdout",
+        "description": "Tomnomnom grep-fu pattern matcher (xss/sqli/idor/ssrf/lfi/...)",
+    },
+    "hakrawler": {
+        "name": "hakrawler", "type": "crawl", "step": 6,
+        "cmd": "hakrawler -url $TARGET$ -depth 2 -plain",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "stdout",
+        "description": "Hakluke fast Go crawler — fallback when katana is too heavy",
+    },
+
+    # ── Specialty attack tools ────────────────────────────────────
+    "arjun": {
+        "name": "Arjun", "type": "param", "step": 10,
+        "cmd": "arjun -u $TARGET$ -oT $OUTPUT$ -t $THREADS$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "HTTP parameter discovery via behavioral diff",
+    },
+    "dalfox": {
+        "name": "Dalfox", "type": "xss", "step": 15,
+        "cmd": "dalfox url $TARGET$ -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "hahwul XSS scanner — DOM + reflected + BAV chain",
+    },
+    "crlfuzz": {
+        "name": "CRLFuzz", "type": "crlf", "step": 16,
+        "cmd": "crlfuzz -u $TARGET$ -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "CRLF-injection probe (header smuggling / response splitting)",
+    },
+    "paramspider": {
+        "name": "ParamSpider", "type": "param", "step": 10,
+        "cmd": "paramspider --domain $DOMAIN$ --exclude woff,png,svg,php,jpg --output $OUTPUT$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "Pull parameter URLs from archive sources (devanshbatham)",
+    },
+    "sqlmap": {
+        "name": "sqlmap", "type": "sqli", "step": 17,
+        "cmd": "sqlmap -u $TARGET$ --batch --random-agent --level 5 --risk 3 --dbs",
+        "enabled": True, "max_concurrent": 1, "parse_mode": "stdout",
+        "description": "Full-stack SQL injection automator",
+    },
+    "masscan": {
+        "name": "Masscan", "type": "port_scan", "step": 4,
+        "cmd": "masscan -p1-65535 $TARGET$ --rate=10000 -oX $OUTPUT$",
+        "enabled": True, "max_concurrent": 1, "parse_mode": "xml",
+        "description": "RobertGraham huge-scale TCP port sweeper",
+    },
+    "gobuster": {
+        "name": "Gobuster", "type": "content", "step": 8,
+        "cmd": "gobuster dir -u $TARGET$ -w $WORDLIST$ -o $OUTPUT$ -t $THREADS$ --no-error",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "Directory / vhost / DNS bruteforce (fallback for ffuf/feroxbuster)",
+    },
+    "dirsearch": {
+        "name": "dirsearch", "type": "content", "step": 8,
+        "cmd": "dirsearch -u $TARGET$ -e conf,config,bak,backup,old,sql,zip,env,git -o $OUTPUT$ -t $THREADS$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        "description": "Python-based recursive content discovery with extension matrix",
+    },
+    "gxss": {
+        "name": "Gxss", "type": "xss", "step": 15,
+        "cmd": "Gxss -p Xss -c $THREADS$",
+        "enabled": True, "max_concurrent": 5, "parse_mode": "stdout",
+        "description": "KathanP19 reflection-finder (pipe filter; pre-dalfox)",
+    },
+    "subjs": {
+        "name": "subjs", "type": "js", "step": 7,
+        "cmd": "subjs -i $INPUT_FILE$",
+        "enabled": True, "max_concurrent": 3, "parse_mode": "stdout",
+        "description": "Pull all JS file URLs from a list of hosts (lc/subjs)",
+    },
+    "sourcemapper": {
+        "name": "SourceMapper", "type": "js", "step": 7,
+        "cmd": "sourcemapper -url $TARGET$ -output $OUTPUT$",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "files",
+        "description": "Reconstruct webpack/source-maps into original source tree",
+    },
+    "secretfinder": {
+        "name": "SecretFinder", "type": "js", "step": 5,
+        "cmd": "SecretFinder -i $TARGET$ -o cli",
+        "enabled": True, "max_concurrent": 3, "parse_mode": "stdout",
+        "description": "m4ll0k regex secret hunter for JS files",
+    },
+    "gotator": {
+        "name": "gotator", "type": "enum", "step": 1,
+        "cmd": "gotator -sub $INPUT_FILE$ -perm $WORDLIST$ -depth 1 -numbers 10 -mindup -adv -md",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "stdout",
+        "description": "Subdomain permutation generator with adversarial mode",
+    },
+    "dnsgen": {
+        "name": "dnsgen", "type": "enum", "step": 1,
+        "cmd": "dnsgen $INPUT_FILE$",
+        "enabled": True, "max_concurrent": 3, "parse_mode": "stdout",
+        "description": "ProjectAnte DNS permutation generator (Python)",
+    },
+
+    # ── Resolvers + scope helpers ────────────────────────────────
+    "dnsvalidator": {
+        "name": "DNSValidator", "type": "util", "step": 0,
+        "cmd": "dnsvalidator -tL $INPUT_FILE$ -threads $THREADS$ -o $OUTPUT$",
+        "enabled": True, "max_concurrent": 1, "parse_mode": "lines",
+        "description": "Validate / refresh resolvers.txt (run weekly)",
+    },
+    "hacker_scoper": {
+        "name": "hacker-scoper", "type": "util", "step": 0,
+        "cmd": "hacker-scoper -f $INPUT_FILE$ -ic $TARGET$",
+        "enabled": True, "max_concurrent": 5, "parse_mode": "stdout",
+        "description": "External scope filter (CLI mirror of scope_guard)",
+    },
 }
 
 def get_tools_config() -> Dict[str, Dict]:
