@@ -1982,6 +1982,12 @@ class ReconHandler(BaseHTTPRequestHandler):
                 return self._serve_frontend()
             if path == "/api/login" and method == "POST":
                 return self._api_login()
+            # SPA static assets (CSS / JS / fonts / images served from
+            # ui/spa/). Public so the SPA can load before the operator
+            # authenticates.
+            if path.startswith("/static/") and method == "GET":
+                filename = path[len("/static/"):]
+                return self._serve_spa_asset(filename)
 
             # ── require session for everything else ───────────
             session = self._require_session()
@@ -2154,10 +2160,44 @@ class ReconHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_frontend(self) -> None:
-        body = FRONTEND_HTML.encode()
+        # Prefer the on-disk SPA (ui/spa/index.html). Falls back to the
+        # embedded FRONTEND_HTML if the on-disk version is missing — keeps
+        # the app bootable from any working tree.
+        spa_index = os.path.join(_BASE, "ui", "spa", "index.html")
+        if os.path.isfile(spa_index):
+            try:
+                with open(spa_index, "rb") as f:
+                    body = f.read()
+            except OSError:
+                body = FRONTEND_HTML.encode()
+        else:
+            body = FRONTEND_HTML.encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", len(body))
+        # No-cache so SPA updates land immediately after a git pull.
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_spa_asset(self, filename: str) -> None:
+        # Serve ui/spa/<filename> for /static/<filename> requests.
+        # Restricted to a flat directory — no path traversal allowed.
+        if "/" in filename or ".." in filename or filename.startswith("."):
+            return self._err("Not found", 404)
+        path = os.path.join(_BASE, "ui", "spa", filename)
+        if not os.path.isfile(path):
+            return self._err("Not found", 404)
+        mt, _ = mimetypes.guess_type(path)
+        try:
+            with open(path, "rb") as f:
+                body = f.read()
+        except OSError:
+            return self._err("Not found", 404)
+        self.send_response(200)
+        self.send_header("Content-Type", mt or "application/octet-stream")
+        self.send_header("Content-Length", len(body))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 

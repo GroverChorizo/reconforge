@@ -1,50 +1,146 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ReconForge v3</title>
-<link rel="stylesheet" href="/static/app.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>ReconForge</title>
+  <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 
-<header class="topbar">
-  <span class="brand">ReconForge</span>
-  <span class="version">v3</span>
+  <!-- ════════════════════════════════════════════════════════════
+       LOGIN SCREEN
+       ════════════════════════════════════════════════════════════ -->
+  <div id="login-screen" class="login-screen">
+    <form id="login-form" class="login-card" action="javascript:void(0)" onsubmit="event.preventDefault(); ReconForge.login(); return false;">
+      <div class="login-brand">
+        <span class="brand-recon">RECON</span><span class="brand-forge">FORGE</span>
+      </div>
+      <div class="login-tag">Bug-bounty operations console</div>
+      <label class="field">
+        <span class="field-label">Operator</span>
+        <input id="login-user" name="username" type="text" autocomplete="username"
+               placeholder="admin" spellcheck="false">
+      </label>
+      <label class="field">
+        <span class="field-label">Passphrase</span>
+        <input id="login-pass" name="password" type="password" autocomplete="current-password">
+      </label>
+      <div id="login-error" class="login-error"></div>
+      <button type="submit" class="btn btn-primary login-submit">
+        <span class="btn-glyph">▸</span> Authenticate
+      </button>
+      <div class="login-foot">Authorized testing only.</div>
+    </form>
+  </div>
 
-  <span class="program-context" id="program-context">
-    <label for="program-select">Program</label>
-    <select id="program-select" aria-label="Active program">
-      <option value="">— no programs —</option>
-    </select>
-    <span id="program-platform" class="platform-chip"></span>
-    <span id="scope-indicator" class="scope-indicator" hidden>
-      <span class="dot"></span>
-      <span class="label"></span>
-    </span>
-  </span>
+  <!-- ════════════════════════════════════════════════════════════
+       APP SHELL
+       ════════════════════════════════════════════════════════════ -->
+  <div id="app-shell" class="app-shell" hidden>
 
-  <span class="topbar-spacer"></span>
-</header>
+    <!-- HEADER -->
+    <header class="app-header">
+      <div class="header-brand">
+        <span class="brand-recon">RECON</span><span class="brand-forge">FORGE</span>
+      </div>
 
-<div class="shell">
-  <nav class="leftnav" id="leftnav">
-    <a href="#workspace/dashboard"  data-section="dashboard">Mission Control</a>
-    <a href="#workspace/scope"      data-section="scope">Scope</a>
-    <a href="#workspace/assets"     data-section="assets">Assets</a>
-    <a href="#workspace/findings"   data-section="findings">Findings</a>
-    <a href="#workspace/attack"     data-section="attack">ATT&amp;CK Map</a>
-    <a href="#workspace/reports"    data-section="reports">Reports</a>
-    <a href="#workspace/tools"      data-section="tools">Toolchain</a>
-    <a href="#workspace/agents"     data-section="agents">Agents</a>
-    <a href="#workspace/settings"   data-section="settings">Settings</a>
-  </nav>
+      <div class="header-context">
+        <div class="ctx-item">
+          <span class="ctx-label">target</span>
+          <span class="ctx-value" id="hdr-target">—</span>
+        </div>
+        <div class="ctx-sep">/</div>
+        <div class="ctx-item">
+          <span class="ctx-label">phase</span>
+          <span class="ctx-value" id="hdr-phase">target intake</span>
+        </div>
+        <div class="ctx-sep">/</div>
+        <div class="ctx-item">
+          <span class="ctx-label">mode</span>
+          <span class="ctx-value risk-badge" id="hdr-risk" data-risk="passive">PASSIVE</span>
+        </div>
+        <div class="ctx-sep">/</div>
+        <div class="ctx-item">
+          <span class="ctx-label">workspace</span>
+          <span class="ctx-value" id="hdr-workspace">—</span>
+        </div>
+      </div>
 
-  <main id="view-root">
-    <div class="loading">Loading…</div>
-  </main>
-</div>
+      <div class="header-actions">
+        <button class="palette-trigger" onclick="ReconForge.openPalette()" title="Command palette (Ctrl+K)">
+          <span class="palette-glyph">⌘K</span>
+          <span class="palette-label">Command Palette</span>
+        </button>
+        <button class="guide-toggle" onclick="ReconForge.toggleGuide()" title="Toggle guide mode">
+          <span id="guide-state">guide off</span>
+        </button>
+        <div class="header-user">
+          <span class="user-name" id="hdr-user">—</span>
+          <button class="user-menu-btn" onclick="ReconForge.logout()" title="Sign out">
+            <span class="user-menu-glyph">⏻</span>
+          </button>
+        </div>
+      </div>
+    </header>
 
-<script src="/static/app.js"></script>
+    <!-- KILL-CHAIN PROGRESS RAIL -->
+    <nav class="killchain-rail" id="killchain-rail" aria-label="Kill chain progress"></nav>
+
+    <!-- MAIN GRID: SIDEBAR + WORKSPACE -->
+    <div class="app-grid">
+      <aside class="app-sidebar" id="sidebar"></aside>
+      <main class="app-workspace" id="workspace"></main>
+    </div>
+
+    <!-- BOTTOM ACTIVITY CONSOLE -->
+    <section id="activity-console" class="activity-console" data-state="expanded">
+      <header class="console-header">
+        <div class="console-title">
+          <span class="console-glyph">▣</span>
+          <span>Activity Console</span>
+          <span class="console-count" id="console-count">0 events</span>
+        </div>
+        <div class="console-tools">
+          <button class="console-btn" onclick="ReconForge.clearConsole()" title="Clear">clear</button>
+          <button class="console-btn" onclick="ReconForge.toggleConsole()" title="Minimize / expand">
+            <span id="console-toggle-label">minimize</span>
+          </button>
+        </div>
+      </header>
+      <div class="console-stream" id="console-stream"></div>
+      <div class="console-minimized" id="console-minimized">
+        <span id="console-summary">Console idle</span>
+        <button class="console-btn" onclick="ReconForge.toggleConsole()">expand</button>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════
+       COMMAND PALETTE OVERLAY
+       ════════════════════════════════════════════════════════════ -->
+  <div id="palette" class="palette" hidden>
+    <div class="palette-scrim" onclick="ReconForge.closePalette()"></div>
+    <div class="palette-modal" role="dialog" aria-label="Command palette">
+      <header class="palette-header">
+        <span class="palette-prompt">&gt;</span>
+        <input type="text" id="palette-input" placeholder="type a command, target, or phase…" autocomplete="off" spellcheck="false">
+        <span class="palette-esc">ESC</span>
+      </header>
+      <div class="palette-results" id="palette-results"></div>
+      <footer class="palette-footer">
+        <span><kbd>↑</kbd> <kbd>↓</kbd> navigate</span>
+        <span><kbd>↵</kbd> select</span>
+        <span><kbd>esc</kbd> close</span>
+      </footer>
+    </div>
+  </div>
+
+  <!-- TOAST CONTAINER -->
+  <div id="toast-stack" class="toast-stack"></div>
+
+  <script src="/static/app.js"></script>
 </body>
 </html>
