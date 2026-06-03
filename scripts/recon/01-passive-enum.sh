@@ -40,7 +40,7 @@ fi
 # ── amass passive ─────────────────────────────────────────────────
 if command -v amass >/dev/null 2>&1; then
     log INFO "amass -passive starting (may take 5+ min)"
-    amass enum -passive -norecursive -noalts -d "$TARGET" -o "$OUTDIR/amass.txt" 2>/dev/null || true
+    amass enum -passive -d "$TARGET" -o "$OUTDIR/amass.txt" 2>/dev/null || true
     [ -f "$OUTDIR/amass.txt" ] && cat "$OUTDIR/amass.txt" | anew_or_tee "$SUBS" >/dev/null
     log INFO "amass → $(count_after) new"
 else

@@ -348,7 +348,8 @@ arjun -u https://target.com/profile -oT params.txt
 arjun -i alive.txt -t 10 --rate-limit 5 -oT mass-params.txt
 
 # paramspider — archive-driven (passive, fast)
-paramspider --domain target.com --exclude woff,png,svg --output params.txt
+# v3 dropped --exclude/--output (static exts filtered internally); -s streams to stdout
+paramspider -d target.com -s | anew params.txt
 
 # x8 — hidden parameter discovery on top hosts
 x8 -u https://target.com -w burp-parameter-names.txt --output-format url
@@ -573,7 +574,7 @@ mkdir -p "$TARGET" && cd "$TARGET"
 # 1. Passive enum
 subfinder -d "$TARGET" -all -silent | anew subs.txt
 github-subdomains -d "$TARGET" -t "$GITHUB_TOKEN" -raw | anew subs.txt
-amass enum -passive -d "$TARGET" -norecursive -noalts | anew subs.txt
+amass enum -passive -d "$TARGET" | anew subs.txt
 curl -s "https://crt.sh/?q=%25.${TARGET}&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' | anew subs.txt
 chaos -d "$TARGET" -silent | anew subs.txt
 

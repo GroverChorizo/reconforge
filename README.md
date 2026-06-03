@@ -1,60 +1,51 @@
 # ReconForge
 
-A local-first, agentic bug-bounty recon assistant. ReconForge runs entirely on
-your machine, orchestrates the standard recon toolchain (`subfinder`, `dnsx`,
-`httpx`, `katana`, `nuclei`, `jsluice`, and ~20 others), enforces program scope
-on every tool invocation, maps findings to MITRE ATT&CK, and drafts
-submission-ready reports for HackerOne, Intigriti, Bugcrowd, YesWeHack, and
-Synack — all behind a single web UI you reach at `http://localhost:8342/`.
+ReconForge is a local-first bug-bounty operations console for disciplined recon,
+scope enforcement, continuous monitoring, and evidence-ready reporting. It wraps
+the tools operators already use (`subfinder`, `amass`, `dnsx`, `httpx`,
+`katana`, `nuclei`, `jsluice`, `arjun`, `paramspider`, and more) behind one
+workflow that keeps targets in scope, traffic attributable, and notes ready for
+your vault.
 
-**For authorized security research only.** Scope Guard rejects any target that
-isn't covered by a configured program scope, and the Intigriti report
-formatter refuses to generate output without your platform handle attached.
+Run it on your machine. Point it at authorized program scope. Start passive,
+promote to active only when the rules allow it, and keep the output organized
+from first subdomain to final report draft.
 
-> A full wiki with deep-dive docs (agent internals, workflow customization,
-> contract schema) is coming. This README is meant to take you from clean
-> machine to first submitted draft.
+For authorized security research only. ReconForge is built for bug-bounty and
+internal security work where you have explicit permission to test.
 
----
+## What You Get
 
-## Contents
-
-1. [Requirements](#requirements)
-2. [Install](#install)
-3. [First run — the setup wizard](#first-run--the-setup-wizard)
-4. [Logging in](#logging-in)
-5. [Add your first program](#add-your-first-program)
-6. [Run your first scan](#run-your-first-scan)
-7. [Read the results](#read-the-results)
-8. [Verify a finding](#verify-a-finding)
-9. [Generate a report](#generate-a-report)
-10. [Vault & contract output](#vault--contract-output)
-11. [Where everything lives](#where-everything-lives)
-12. [Day-to-day commands](#day-to-day-commands)
-13. [Safety guardrails](#safety-guardrails)
-
----
+- A browser-based recon console at `http://127.0.0.1:8342/`.
+- First-run setup wizard for handles, API keys, tool detection, and vault path.
+- Scope-aware scan submission with local SQLite storage.
+- OPSEC defaults for target-touching tools: rate limits, optional proxy, jitter,
+  random User-Agent, and platform identity headers.
+- Passive, active, URL, JavaScript, parameter, vuln-triage, evidence, and report
+  workflow cards.
+- Continuous monitoring with adaptive cadence for enrolled targets.
+- CyberBrain/Obsidian-friendly contract output and vault note paths.
 
 ## Requirements
 
-| What | Minimum | Notes |
-|---|---|---|
-| Python | 3.11+ | 3.12 preferred |
-| OS | Linux (Parrot, Kali, Ubuntu) | macOS and Windows also run |
-| Disk | ~2 GB | for tool binaries + scan artifacts |
-| Recon tools | none upfront | the wizard tells you exactly what's missing and how to install each |
+| Requirement | Minimum | Notes |
+| --- | --- | --- |
+| Python | 3.11+ | Python 3.12 recommended |
+| OS | Linux, macOS, Windows | Linux has the best toolchain support |
+| Disk | 2 GB+ | Tool output and screenshots can grow quickly |
+| Browser | Any modern browser | UI is served locally |
 
-Optional but recommended:
-- **Docker** — bundles the recon toolchain so you can skip system installs.
-- **Claude API key** — unlocks the Strategist / Hunter / Analyst / Reporter
-  agents. Without one you can still drive recon manually.
-- **GitHub PAT** with `public_repo` scope — required by `github-subdomains`.
+Optional but useful:
 
----
+- Docker, if you prefer containerized execution.
+- GitHub token for `github-subdomains` and richer passive recon.
+- ProjectDiscovery `notify` config for monitor alerts.
+- Claude API or Ollama if you want agent-assisted analysis and reports.
+- An Obsidian vault, CyberBrain vault, or any directory for exported notes.
 
 ## Install
 
-### Option A — local Python (Linux / macOS)
+### Local Python
 
 ```bash
 git clone https://github.com/grover-bb/reconforge.git
@@ -62,345 +53,273 @@ cd reconforge
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+python main.py
 ```
 
-### Option B — Docker
+On Windows PowerShell:
+
+```powershell
+git clone https://github.com/grover-bb/reconforge.git
+cd reconforge
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+python main.py
+```
+
+### Docker
 
 ```bash
 docker compose up --build
 ```
 
-The image bundles the recon toolchain. Data persists in the `recon_data` named
-volume; mount a different one to relocate it.
+If you use Docker, keep the data volume mounted somewhere durable. ReconForge
+stores jobs, screenshots, reports, and SQLite state locally.
 
-### Windows
+## First Launch
 
-Same as Option A in PowerShell, with `.\.venv\Scripts\Activate.ps1` instead of
-`source`.
-
----
-
-## First run — the setup wizard
+Start the server:
 
 ```bash
 python main.py
 ```
 
-On first launch ReconForge detects that `~/.config/reconforge/settings.json`
-doesn't exist and auto-runs the **setup wizard** in your terminal. The wizard
-writes a single local config file (`0600` perms on POSIX) and **never stores
-credentials in the web app DB**.
+On first run, ReconForge opens the terminal setup wizard. The wizard writes
+local configuration to `~/.config/reconforge/settings.json` and does not store
+API keys in the web app database.
 
-The seven screens, with what each one is asking for and why:
+The wizard asks for:
 
-| # | Screen | What you give it | What it's used for |
-|---|---|---|---|
-| 1 | **Welcome** | Press Enter | OPSEC reminder |
-| 2 | **Platform Identities** | Your researcher handle on each of Intigriti / HackerOne / Bugcrowd / YesWeHack / Synack (blank = skip) | Injected into required headers (`X-Intigriti-Username`, etc.) on every outbound request, and into HackerOne's identifiable User-Agent. **Required for report generation on Intigriti.** |
-| 3 | **Tool Detect** | Press Enter | Scans `PATH` for all 24 catalog tools and prints copy-pasteable install commands for anything missing (apt / `go install` / `pip`). Paste them into another shell — the wizard does not run `sudo` for you. |
-| 4 | **API Keys** | `GITHUB_TOKEN`, Interactsh server URL (default `https://oast.pro`), Shodan key | `GITHUB_TOKEN` unlocks `github-subdomains`; Interactsh is used for blind-SSRF / OOB callbacks; Shodan for passive recon enrichment. |
-| 5 | **LLM Setup** | `api` + Claude API key, `local` + Ollama URL, or `skip` | Powers the agentic pipeline. `skip` gives you manual recon only — fine for getting started. |
-| 6 | **Scope Paste** *(optional)* | Paste a program scope JSON, or blank to skip | Creates `~/.config/reconforge/scopes/<name>.json`. If you skip, add programs through the UI later. `platform_handle` is auto-filled from screen 2. |
-| 7 | **Vault Pick** | Path to your Obsidian vault (default `~/Documents/BugBountyVault`) | Where the Reporter writes Obsidian-friendly notes. |
+| Step | Input | Why It Matters |
+| --- | --- | --- |
+| Platform identities | Your handles for Intigriti, HackerOne, Bugcrowd, YesWeHack, Synack | Used for required headers and report metadata |
+| Tool detection | Nothing to type unless tools are missing | Prints install commands for missing recon tools |
+| API keys | GitHub, Interactsh server, Shodan | Enables richer passive recon and OOB testing support |
+| LLM setup | Claude API, Ollama, or skip | Enables optional agent workflows |
+| Scope JSON | Optional program scope | Seeds the first authorized target/program |
+| Vault path | Path to your notes vault | Controls where notes and contract output are written |
 
-To re-run the wizard later (it overwrites `settings.json`):
+To re-run the wizard later:
 
 ```bash
 python -m wizard
 ```
 
-To bypass entirely (systemd / CI / non-interactive):
+To skip setup in scripted environments:
 
 ```bash
 python main.py --skip-setup
 ```
 
----
+## Log In
 
-## Logging in
+After startup, ReconForge prints the first admin password once:
 
-After the wizard exits, the server starts and prints your admin password
-**exactly once**:
-
-```
+```text
 ====================================================
-  ReconForge first-run — admin account created
+  ReconForge first-run - admin account created
   Username : admin
   Password : <copy this immediately>
 ====================================================
 ```
 
-Copy it. Open `http://127.0.0.1:8342/` and log in. To reset it later, delete
-the user row in SQLite and restart the server — a new password will be
-generated.
+Open `http://127.0.0.1:8342/`, authenticate as `admin`, and keep the generated
+password in your password manager.
 
----
+## Configure Your First Program
 
-## Add your first program
+ReconForge works best when every target is tied to a program scope. You can add
+scope during the wizard or through the UI.
 
-ReconForge organizes everything around **programs**. A program is your scope +
-platform metadata + bounty ranges. You can add one three ways:
+In the UI:
 
-**Via the UI:** Settings → Programs → New. Paste the scope JSON, save.
+1. Open `Target -> Intake`.
+2. Enter the target domain, program name, workspace name, and vault path.
+3. Paste in-scope and out-of-scope rules.
+4. Pick `Passive` for the first run.
+5. Save the intake.
 
-**Via the wizard's Scope Paste screen** (covered above).
+You can also place JSON scope files in:
 
-**By dropping a file** into `~/.config/reconforge/scopes/<program>.json`.
+```text
+~/.config/reconforge/scopes/
+```
 
-The scope JSON shape — `scopes/example.json` is a working template:
+Example scope:
 
 ```json
 {
   "name": "example-program",
   "platform": "intigriti",
-  "platform_handle": "<YOUR_HANDLE>",
-  "policy_url": "https://app.intigriti.com/programs/example/policy",
+  "platform_handle": "your-handle",
+  "policy_url": "https://example.com/program-policy",
   "in_scope": [
-    {"type": "domain",   "value": "example.com",    "tier": 1},
-    {"type": "wildcard", "value": "*.example.com",  "tier": 2},
-    {"type": "cidr",     "value": "203.0.113.0/24", "tier": 3}
+    {"type": "domain", "value": "example.com", "tier": 1},
+    {"type": "wildcard", "value": "*.example.com", "tier": 2}
   ],
   "out_of_scope": [
-    {"type": "domain",   "value": "careers.example.com"},
-    {"type": "wildcard", "value": "*.dev.example.com"}
+    {"type": "domain", "value": "careers.example.com"}
   ],
   "bounty_ranges": {
-    "critical": [2000, 5000], "high":   [1000, 3000],
-    "medium":   [500,  1000], "low":    [100,  500]
+    "critical": [2000, 5000],
+    "high": [1000, 3000],
+    "medium": [500, 1000],
+    "low": [100, 500]
   }
 }
 ```
 
-Two rules baked into Scope Guard you should know about:
+Scope rules to remember:
 
-1. **Out-of-scope always wins.** A subdomain that matches an out-of-scope
-   pattern is rejected even if it also matches an in-scope wildcard.
-2. **`*.example.com` does NOT include `example.com` itself.** List the apex
-   explicitly if it's in scope.
+- Out-of-scope wins over in-scope.
+- `*.example.com` does not include `example.com`; add the apex separately.
+- Active workflows should only run after you confirm the program rules allow
+  that traffic.
 
-Verify a target without launching anything:
+## Configure OPSEC Defaults
 
-```bash
-python -m reconforge scope check --program scopes/example.json --target sub.example.com
-# → {"allowed": true, "tier": 2, "headers": {"X-Intigriti-Username": "..."}}
-```
+Open `Operations -> Settings` and review the OPSEC panel before active scans.
 
----
+Recommended starting values:
 
-## Run your first scan
+| Setting | Default | Use |
+| --- | --- | --- |
+| HTTP/SOCKS proxy | blank | Route tools through Burp, Caido, Tor, or a lab proxy |
+| Rate limit | `50` req/s | Applied to target-touching tools that support it |
+| Delay | blank, monitor uses `200ms` | Adds per-request spacing/jitter |
+| Random User-Agent | on | Disabled automatically when a program User-Agent is pinned |
 
-Once a program exists, the top-bar **program selector** appears and the whole
-console re-orients around it. Pick the program, then:
+Platform handles from the wizard are converted into headers such as
+`X-Intigriti-Username` or a HackerOne researcher User-Agent where applicable.
 
-### 1. Pick a workflow + mode
+## Run Your First Scan
 
-| Workflow | What it does | Mode it implies |
-|---|---|---|
-| `passive_recon` | OSINT-only subdomain enumeration (`subfinder`, `amass -passive`, `crt.sh`, `findomain`). Zero traffic to target. | safest — always allowed |
-| `active_recon` | DNS resolution + HTTP probing + screenshots (`dnsx`, `httpx`, `gowitness`). Sends requests. | `active_recon` |
-| `content_discovery` | URL discovery and content fuzzing (`katana`, `feroxbuster`, `ffuf`). | `content_discovery` |
-| `vuln_triage` | Nuclei + targeted vuln scans on confirmed assets. | `vuln_triage` |
-| `evidence_collection` | Re-run targeted tools to capture raw req/resp pairs for a draft. | `evidence_collection` |
-| `report_drafting` | Per-platform draft generation (no scanning). | `report_drafting` |
-| `retest` | Re-verify a previously-closed finding. | `retest` |
+Start with passive recon:
 
-The selected mode gates which tools the pipeline allows. `passive_recon` is
-the safest default for a new program.
+1. Open `Recon -> Passive Recon`.
+2. Review the listed commands.
+3. Copy or run the passive workflow for your authorized target.
+4. Watch `Dashboard`, `Jobs`, and the activity console for progress.
 
-### 2. Pre-flight gate
-
-Every tool launch above `passive_recon` shows a **pre-flight modal** with:
-
-- The matched scope rule and tier
-- Allowed/disallowed HTTP methods for the mode
-- An excerpt of the program's Rules of Engagement (from `policy_url`)
-- The exact command that will run (variables expanded)
-- The effective rate limit (default 50 req/s, 10 threads, 200ms jitter)
-
-The default is **Cancel**. You must explicitly acknowledge to proceed. This
-is intentional — it catches scope mistakes before they cost you the program.
-
-### 3. Watch it run
-
-The Jobs view streams stdout from each tool in real time. Stats (CPU, memory,
-disk, queue depth) live in the dashboard. Discovered hosts appear in the
-**Assets tree** with scope badges as they're confirmed.
-
----
-
-## Read the results
-
-After a scan completes you'll have output in three places:
-
-### In the web UI
-
-- **Assets tree** — hierarchical view of discovered subdomains, each tagged
-  with tier, scope status, HTTP fingerprint, and screenshot. Click a node
-  for endpoints, tech stack, response headers.
-- **Findings Kanban board** — vuln candidates surfaced by Nuclei and the
-  Hunter agent, organized by status:
-  `new → needs_review → confirmed → draft_ready → submitted → retesting / closed`.
-  Drag cards between columns to update status.
-- **Dashboard** — counts by tier, scope-block log, recent jobs.
-
-### In `recon_data/` on disk
-
-```
-recon_data/
-├── recon.db              SQLite — all programs, jobs, findings, sessions
-├── jobs/<job_id>/        per-job working dir (raw tool stdout, intermediate files)
-├── screenshots/          gowitness PNGs of probed hosts
-├── backups/              tarball snapshots (manual or auto-backup worker)
-└── tmp/                  scratch space, cleaned every few hours
-```
-
-Move it with `RECON_DATA_DIR=/path/to/data python main.py`.
-
-### As a "contract directory" for the Obsidian vault
-
-See [Vault & contract output](#vault--contract-output).
-
----
-
-## Verify a finding
-
-Click a finding card to open the detail page. Six tabs:
-
-| Tab | What to do here |
-|---|---|
-| **Overview** | Title, severity, CVSS, affected asset, status |
-| **Raw Evidence** | The actual request/response pair that triggered the detection |
-| **AI Analysis** | Hunter/Analyst output. **Mutable** until you hit Verify; once verified it freezes with `verified_by` + `verified_at` |
-| **ATT&CK / CWE / OWASP** | Taxonomy mapping for your report |
-| **Manual Verification** | Curated checklist for the vuln class (IDOR, mass-assignment, XSS, XXE, SSRF, takeover). You must tick every item before the Quality Gate will let you draft a report |
-| **Drafts** | Generated per-platform drafts (only available once status is `draft_ready`) |
-
-To move a finding to `draft_ready`, complete the Manual Verification
-checklist and drag the card to the next column.
-
----
-
-## Generate a report
-
-On the Drafts tab, pick the platform. The **Report Quality Gate** runs 10
-deterministic checks before letting you copy:
-
-1. Title names the vuln class + asset + impact
-2. All required sections present (Summary, Reproduction, PoC, Impact, CVSS, Remediation)
-3. CVSS 4.0 vector + per-metric justification
-4. Working PoC (not a placeholder)
-5. Scope re-verified at draft time (catches deleted/moved assets)
-6. No secrets / tokens / cookies / internal hostnames leaked in evidence
-7. Manual Verification checklist acknowledged
-8. Platform handle present (Intigriti will refuse to format without it)
-9. Severity matches CVSS score band
-10. Evidence chain links resolve
-
-Copy-to-clipboard is gated until all 10 pass. Submit through the platform's
-own UI — ReconForge never sends reports for you.
-
-The draft also writes a `BUG-XXX.md` file into your Obsidian vault for
-permanent archive.
-
----
-
-## Vault & contract output
-
-Every completed pipeline run also emits a **contract directory** that the
-CyberBrain Obsidian vault's `tools/ingest_recon.py` can consume:
-
-```
-$RECONFORGE_OUTPUT_DIR/<program-slug>/<YYYY-MM-DD-HHmm>/
-├── _manifest.json    run metadata, tool versions, scope used
-├── hosts.jsonl       one host per line: subdomain, IP, status, tech
-├── endpoints.jsonl   discovered URLs with method, status, length
-├── findings.jsonl    vuln candidates with severity, evidence ref
-├── raw/              raw tool stdout (placeholder; tools may drop here)
-└── screenshots/      gowitness output
-```
-
-Default `$RECONFORGE_OUTPUT_DIR` is `./out/`. Schema spec lives in the vault
-(`CyberBrain/RECONFORGE_CONTRACT.md`); a pinned copy is at
-`tests/fixtures/reconforge-manifest.schema.json`.
-
-Emission is automatic at end-of-run and **never fails the pipeline** — check
-the run's event log for `pipeline.contract_emit_failed` if a contract dir is
-missing. Re-emit manually:
+Passive recon uses public sources and should not send traffic to the target.
+Typical commands include:
 
 ```bash
-python -m reconforge contract emit --job-id <id> [--vault-output PATH]
+subfinder -d example.com -all -silent -o subs/subfinder.txt
+amass enum -passive -d example.com -o subs/amass.txt
+curl -s "https://crt.sh/?q=%25.example.com&output=json"
 ```
 
----
+After passive recon, move to active probing only when scope allows it:
 
-## Where everything lives
+1. Open `Recon -> Active Recon`.
+2. Resolve candidates with `dnsx`.
+3. Probe live hosts with `httpx`.
+4. Keep rate limits conservative until you understand the program tolerance.
 
-| Path | What's there |
-|---|---|
-| `~/.config/reconforge/settings.json` | Local identities, API keys, LLM config. `0600`. Source of truth for credentials; mirrored read-only into web DB on each boot. |
-| `~/.config/reconforge/scopes/*.json` | Program scope JSON files. |
-| `recon_data/recon.db` | SQLite — programs, jobs, findings, sessions, ATT&CK mappings. |
-| `recon_data/jobs/<id>/` | Per-job stdout, intermediate files. |
-| `recon_data/screenshots/` | Gowitness PNGs. |
-| `recon_data/backups/` | Tarball snapshots. |
-| `./out/<program>/<timestamp>/` | Contract directory for vault ingest (override with `RECONFORGE_OUTPUT_DIR`). |
-| `~/Documents/BugBountyVault/` | Obsidian-friendly notes the Reporter writes (set in wizard). |
+From the dashboard, you can also submit a scan directly with a target domain.
+ReconForge records the job, tool output, logs, screenshots, and discovered
+assets under `recon_data/`.
 
----
+## Continuous Monitoring
 
-## Day-to-day commands
+Use `Operations -> Monitors` to enroll a target for recurring lightweight recon.
+
+The scheduler starts with a 4-hour cadence. If new assets keep appearing, the
+cadence stays tight. If the target is quiet, it backs off through longer bands
+up to 7 days. New assets reset the cadence and can trigger `notify` if enabled.
+
+Monitor scans are intended for passive enum plus light HTTP probing. Loud vuln
+triage remains a deliberate operator action.
+
+## Vault And CyberBrain Configuration
+
+ReconForge has two vault-related paths:
+
+| Setting | Meaning |
+| --- | --- |
+| `cyberbrain_vault_path` | Your notes vault root, usually set in the wizard |
+| `reconforge_output_dir` | Contract output directory, defaults to `./out/` |
+
+Set or update them in `Operations -> Settings`, or edit:
+
+```text
+~/.config/reconforge/settings.json
+```
+
+Typical settings:
+
+```json
+{
+  "cyberbrain_vault_path": "C:/Users/you/Documents/CyberBrain",
+  "reconforge_output_dir": "./out",
+  "auto_emit_contract": true,
+  "auto_ingest_vault": true,
+  "notify_on_new_assets": true
+}
+```
+
+Each completed run can emit a contract directory:
+
+```text
+out/<program-slug>/<YYYY-MM-DD-HHmm>/
+├── _manifest.json
+├── hosts.jsonl
+├── endpoints.jsonl
+├── findings.jsonl
+├── raw/
+└── screenshots/
+```
+
+Use this output as the handoff point for CyberBrain, Obsidian notes, evidence
+review, or downstream reporting workflows.
+
+## Where Data Lives
+
+| Path | Contents |
+| --- | --- |
+| `~/.config/reconforge/settings.json` | Local identities, API keys, LLM config, vault paths |
+| `~/.config/reconforge/scopes/*.json` | Program scope definitions |
+| `recon_data/recon.db` | SQLite app state, jobs, assets, findings, users |
+| `recon_data/jobs/<job_id>/` | Per-job raw output and intermediate files |
+| `recon_data/screenshots/` | Web screenshots |
+| `recon_data/backups/` | Local backup archives |
+| `out/<program>/<timestamp>/` | Vault/contract export directories |
+
+Move runtime data with:
 
 ```bash
-# Start the server
+RECON_DATA_DIR=/path/to/recon_data python main.py
+```
+
+## Useful Commands
+
+```bash
+# Start locally
 python main.py --host 127.0.0.1 --port 8342
 
-# HTTPS with auto-generated self-signed cert
+# Start with HTTPS using a generated self-signed certificate
 python main.py --https
 
-# Skip the wizard at boot (systemd, CI, scripted env)
-python main.py --skip-setup
-
-# Re-run the setup wizard (overwrites ~/.config/reconforge/settings.json)
+# Re-run setup
 python -m wizard
 
-# Submit a scan from the CLI (no browser)
-python -m reconforge scan example.com
-
-# Check a target against a scope file before launching anything
-python -m reconforge scope check --program scopes/example.json --target sub.example.com
-
-# Apply pending DB migrations (usually happens automatically on boot)
-python -m reconforge migrate up
-python -m reconforge migrate status
-
-# Re-emit the vault contract directory for a completed job
-python -m reconforge contract emit --job-id <id>
+# Run tests
+pytest -q
 ```
 
----
+## Safety Model
 
-## Safety guardrails
+- ReconForge is local-first. Do not expose the web UI to the public internet.
+- Keep program scope current before scanning.
+- Start passive, then promote to active only when authorized.
+- Use a proxy when you need raw request visibility.
+- Keep platform identity headers configured for programs that require them.
+- Do not commit `recon_data/`, vault output, API keys, screenshots, or scan
+  artifacts.
 
-These are non-negotiable in the codebase, not just policy:
+## Status
 
-- **No synthetic data.** ReconForge will not generate fake HTTP responses or
-  fabricate vulnerability evidence. Every claim in a finding traces to a real
-  request/response pair stored in `recon_data/`.
-- **No unauthorized targets.** Scope Guard runs before *every* tool
-  invocation. Out-of-scope entries always win over in-scope wildcards.
-- **No silent header drops.** Report generators raise an error rather than
-  send unattributed traffic. If you see "platform_handle required," re-run
-  the wizard or fix the program JSON.
-- **Conservative defaults.** 50 req/s, 10 threads, 200ms jitter, T2 nmap
-  timing. Aggressive mode requires explicit operator confirmation per scan.
-- **Pre-flight ACK.** Mod-active+ tool launches show the exact command,
-  rate, and matched scope rule. Default action is Cancel.
-- **Local-only by default.** Server binds `0.0.0.0` but the printed banner
-  always points at `127.0.0.1`. Don't expose it to the internet — there's
-  no rate limit on the login endpoint.
-
----
-
-## License
-
-MIT
+ReconForge is under active development and optimized for practical bug-bounty
+operations. Expect fast iteration, local-first defaults, and workflows designed
+for researchers who care about coverage, evidence, and clean reporting.

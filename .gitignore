@@ -24,10 +24,14 @@ htmlcov/
 # Editor / OS
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 .DS_Store
 Thumbs.db
+
+# Local scratch files
+script_*.js
 
 # TLS certs (auto-generated)
 *.crt

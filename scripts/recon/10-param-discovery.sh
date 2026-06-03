@@ -14,10 +14,11 @@ if [ ! -s "$ALIVE" ]; then
 fi
 
 # paramspider (passive, uses archives)
+# ParamSpider v3 removed --exclude/--output and always writes results/<domain>.txt;
+# -s streams the parameterized URLs to stdout, which we capture into OUTDIR.
 if command -v paramspider >/dev/null 2>&1; then
     log INFO "paramspider"
-    paramspider --domain "$TARGET" --exclude woff,png,svg,php,jpg \
-        --output "$OUTDIR/paramspider.txt" 2>/dev/null || true
+    paramspider -d "$TARGET" -s > "$OUTDIR/paramspider.txt" 2>/dev/null || true
 fi
 
 # arjun (active, behavioral diff). Throttle aggressively.

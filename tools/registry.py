@@ -851,7 +851,9 @@ REGISTRY: Dict[str, ToolSpec] = {
         name="paramspider", category="adaptive", technique="T1593.003",
         description="Pull parameter URLs from archive sources (devanshbatham).",
         input_schema=_DOMAIN_SCHEMA, handler="adaptive", adaptive=True,
-        cmd_template="paramspider --domain $DOMAIN$ --exclude woff,png,svg,php,jpg --output $OUTPUT$",
+        # v3 dropped --exclude/--output; -s streams URLs to stdout, which the
+        # adaptive handler captures. Uses $TARGET$ (the only placeholder it fills).
+        cmd_template="paramspider -d $TARGET$ -s",
         safety_class="passive",
     ),
     "sqlmap": ToolSpec(

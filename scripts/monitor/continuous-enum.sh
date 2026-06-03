@@ -26,7 +26,7 @@ if command -v assetfinder >/dev/null 2>&1; then
     assetfinder --subs-only "$TARGET" 2>/dev/null >> "$NEW_SUBS" || true
 fi
 if command -v amass >/dev/null 2>&1; then
-    amass enum -passive -norecursive -d "$TARGET" 2>/dev/null >> "$NEW_SUBS" || true
+    amass enum -passive -d "$TARGET" 2>/dev/null >> "$NEW_SUBS" || true
 fi
 if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
     curl -s "https://crt.sh/?q=%25.${TARGET}&output=json" 2>/dev/null \

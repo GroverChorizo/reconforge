@@ -9,12 +9,33 @@ Returns are explicit:
 """
 from __future__ import annotations
 
+import os
 import shlex
 import shutil
 import subprocess
 import threading
 import time
 from typing import Dict, List, Optional, Tuple
+
+# Process-wide OPSEC proxy. Set once by the server (main.set_runner_opsec) from
+# the opsec_http_proxy config so every agent-dispatched tool routes through the
+# same proxy as the main pipeline, without threading config through each caller.
+_PROXY: str = ""
+
+
+def set_proxy(url: str) -> None:
+    global _PROXY
+    _PROXY = url or ""
+
+
+def _proxied_env(env: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+    if env is not None or not _PROXY:
+        return env
+    e = os.environ.copy()
+    for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+              "http_proxy", "https_proxy", "all_proxy"):
+        e[k] = _PROXY
+    return e
 
 
 def run_proc(
@@ -35,7 +56,7 @@ def run_proc(
             stderr=subprocess.PIPE,
             text=True,
             cwd=cwd,
-            env=env,
+            env=_proxied_env(env),
         )
     except FileNotFoundError:
         return -1, "", f"{cmd[0]}: command not found"

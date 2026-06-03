@@ -1,5 +1,5 @@
 /* ════════════════════════════════════════════════════════════════
-   ReconForge SPA — cypherpunk operations console
+   ReconForge SPA - local-first bug-bounty operations console
    Per docs/UI_UX_REDESIGN_SPEC.md
    ════════════════════════════════════════════════════════════════ */
 
@@ -17,12 +17,17 @@ const state = {
     workspace:      null,             // workspace name
     cyberbrainPath: null,             // CyberBrain export root path
     riskMode:       "passive",        // "passive" | "active" | "aggressive"
+    // Intake form draft. Bound to every field on the Intake page and updated
+    // on each keystroke so a re-render (e.g. selecting a risk mode) never wipes
+    // in-progress input. Seeded from persisted state on boot.
+    intakeDraft:    { target: "", program: "", workspace: "", cyberbrain: "", scope: "", oos: "" },
     phase:          "target-intake",  // current methodology phase
     guideMode:      false,             // optional helper text toggle
     consoleEvents:  [],
     consoleState:   "expanded",        // "expanded" | "minimized"
     palette:        { open: false, query: "", selected: 0, items: [] },
     pollHandle:     null,
+    config:         null,              // /api/config cache (Settings page)
 };
 
 const LS = {
@@ -124,6 +129,10 @@ async function boot() {
     state.workspace      = LS.get("workspace", null);
     state.cyberbrainPath = LS.get("cyberbrainPath", null);
     state.riskMode       = LS.get("riskMode", "passive");
+    // Seed the intake draft so a returning operator sees their saved target.
+    state.intakeDraft.target     = state.target || "";
+    state.intakeDraft.workspace  = state.workspace || "";
+    state.intakeDraft.cyberbrain = state.cyberbrainPath || "";
 
     const r = await api("GET", "/api/state");
     if (r.status === 401 || !r.ok) {
@@ -191,9 +200,13 @@ function startPolling() {
         if (r.status === 401) { logout(); return; }
         if (r.ok) {
             state.apiState = r.data && (r.data.data || r.data);
-            // Re-render only operational pages so we don't fight user input
+            // Re-render only operational pages, and never while the operator is
+            // typing into a field on that page — a poll-driven innerHTML swap
+            // would wipe the in-progress input.
             const route = currentRoute();
-            if (["dashboard","jobs","queue","workers","monitors","resources"].includes(route)) {
+            const ae = document.activeElement;
+            const editing = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA");
+            if (!editing && ["dashboard","jobs","queue","workers","monitors","resources"].includes(route)) {
                 renderWorkspace();
             }
             renderKillchain();
@@ -223,6 +236,7 @@ function handleRouteChange() {
     document.getElementById("hdr-phase").textContent = phaseLabel(state.phase);
     renderKillchain();
     renderWorkspace();
+    if (route === "settings") ensureConfig();
 }
 
 function routeToPhase(route) {
@@ -366,9 +380,7 @@ PAGES.dashboard = function () {
 };
 
 PAGES.intake = function () {
-    const target = state.target || "";
-    const workspace = state.workspace || "";
-    const cyberbrain = state.cyberbrainPath || "";
+    const d = state.intakeDraft;
     return `
       ${renderWorkspaceHead("Target Intake", "Target", "Define the engagement before recon begins.")}
       <div class="workspace-cols">
@@ -378,27 +390,27 @@ PAGES.intake = function () {
               <div class="form-grid">
                 <div>
                   <label class="form-label">Target domain</label>
-                  <input id="intake-target" type="text" value="${escapeAttr(target)}" placeholder="example.com" spellcheck="false">
+                  <input id="intake-target" type="text" value="${escapeAttr(d.target)}" placeholder="example.com" spellcheck="false">
                 </div>
                 <div>
                   <label class="form-label">Program name</label>
-                  <input id="intake-program" type="text" placeholder="Acme Corp" spellcheck="false">
+                  <input id="intake-program" type="text" value="${escapeAttr(d.program)}" placeholder="Acme Corp" spellcheck="false">
                 </div>
                 <div>
                   <label class="form-label">Workspace name</label>
-                  <input id="intake-workspace" type="text" value="${escapeAttr(workspace)}" placeholder="acme-com" spellcheck="false">
+                  <input id="intake-workspace" type="text" value="${escapeAttr(d.workspace)}" placeholder="acme-com" spellcheck="false">
                 </div>
                 <div>
                   <label class="form-label">CyberBrain path</label>
-                  <input id="intake-cyberbrain" type="text" value="${escapeAttr(cyberbrain)}" placeholder="CyberBrain/BugBounty/acme.com">
+                  <input id="intake-cyberbrain" type="text" value="${escapeAttr(d.cyberbrain)}" placeholder="CyberBrain/BugBounty/acme.com">
                 </div>
                 <div class="full">
                   <label class="form-label">Scope rules</label>
-                  <textarea id="intake-scope" rows="3" placeholder="*.example.com&#10;api.example.com&#10;app.example.com" style="width:100%; font-family: var(--font-mono);"></textarea>
+                  <textarea id="intake-scope" rows="3" placeholder="*.example.com&#10;api.example.com&#10;app.example.com" style="width:100%; font-family: var(--font-mono);">${escapeHTML(d.scope)}</textarea>
                 </div>
                 <div class="full">
                   <label class="form-label">Out of scope</label>
-                  <textarea id="intake-oos" rows="2" placeholder="careers.example.com&#10;status.example.com" style="width:100%; font-family: var(--font-mono);"></textarea>
+                  <textarea id="intake-oos" rows="2" placeholder="careers.example.com&#10;status.example.com" style="width:100%; font-family: var(--font-mono);">${escapeHTML(d.oos)}</textarea>
                 </div>
                 <div class="full">
                   <label class="form-label">Risk mode</label>
@@ -469,7 +481,7 @@ PAGES.scope = function () {
 
 PAGES.passive = function () { return renderMethodologyPage("passive", "Passive Recon", "Recon", "passive", [
     { label: "subfinder all-source",  cmd: `subfinder -d ${tgt()} -all -recursive -silent -o subs/sf.txt`, risk: "passive", note: "Expand the target surface from public passive sources." },
-    { label: "amass passive",         cmd: `amass enum -passive -norecursive -noalts -d ${tgt()} -o subs/am.txt`, risk: "passive" },
+    { label: "amass passive",         cmd: `amass enum -passive -d ${tgt()} -o subs/am.txt`, risk: "passive" },
     { label: "github-subdomains",     cmd: `github-subdomains -d ${tgt()} -t $GITHUB_TOKEN -e -raw -o subs/gh.txt`, risk: "passive" },
     { label: "crt.sh certificate transparency", cmd: `curl -s "https://crt.sh/?q=%25.${tgt()}&output=json" | jq -r '.[].name_value' | sed 's/\\*\\.//g' | sort -u > subs/crt.txt`, risk: "passive" },
 ]); };
@@ -522,7 +534,7 @@ PAGES.fingerprint = function () { return renderMethodologyPage("fingerprint", "T
 
 PAGES.params = function () { return renderMethodologyPage("params", "Parameter Inventory", "Map", "active", [
     { label: "arjun behavioral diff",    cmd: `arjun -i alive.txt -t 10 --rate-limit 5 -oT arjun-params.txt`, risk: "active", note: "Behavioral diff is slow but accurate. Throttle aggressively." },
-    { label: "paramspider archives",     cmd: `paramspider --domain ${tgt()} --exclude woff,png,svg --output paramspider.txt`, risk: "passive" },
+    { label: "paramspider archives",     cmd: `paramspider -d ${tgt()} -s | anew paramspider.txt`, risk: "passive", note: "ParamSpider v3 dropped --exclude/--output; -s streams URLs to stdout (also saved to results/)." },
     { label: "x8 hidden parameters",     cmd: `x8 -u https://${tgt()} -w $WORDLIST_DIR/burp-parameter-names.txt --output-format url`, risk: "active" },
 ]); };
 
@@ -695,11 +707,64 @@ PAGES.workers = function () {
 };
 
 PAGES.monitors = function () {
+    const rows = (state.apiState && state.apiState.schedule) || [];
+    const table = rows.length ? `
+      <table class="tbl">
+        <thead><tr><th>Target</th><th>Status</th><th>Cadence</th><th>Next run</th><th>Quiet</th><th>Last Δ</th><th></th></tr></thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td class="mono">${escapeHTML(r.domain)}</td>
+              <td>${r.enabled ? `<span class="badge badge-success">ON</span>` : `<span class="badge badge-muted">PAUSED</span>`}</td>
+              <td class="mono">${fmtInterval(r.interval_seconds)}</td>
+              <td class="mono text-sec">${escapeHTML(fmtWhen(r.next_run_at))}</td>
+              <td class="mono text-sec">${fmtQuiet(r.last_new_asset_at)}</td>
+              <td>${r.last_delta_count > 0 ? `<span class="badge badge-success">+${r.last_delta_count}</span>` : `<span class="text-mute">0</span>`}</td>
+              <td style="text-align:right; white-space:nowrap;">
+                <button class="btn btn-ghost btn-sm" onclick="ReconForge.toggleMonitor(${r.id}, ${r.enabled ? 0 : 1})">${r.enabled ? "pause" : "resume"}</button>
+                <button class="btn btn-ghost btn-sm" onclick="ReconForge.removeMonitor(${r.id})">remove</button>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    ` : `<div class="tbl-empty">No targets enrolled. Add one below to start continuous monitoring.</div>`;
+
+    const enroll = `
+      <div style="display:flex; gap:8px; margin-top:10px;">
+        <input id="mon-domain" type="text" placeholder="example.com" spellcheck="false" style="flex:1;">
+        <button class="btn btn-primary" onclick="ReconForge.enrollMonitor()">▸ Monitor target</button>
+      </div>
+      <div class="form-help">Passive enum + httpx on a 4h→7d adaptive cadence. New assets reset the cadence to 4h, fire a <span class="mono">notify</span> alert, and flow to CyberBrain as review drafts. Scope Guard gates every scan.</div>
+    `;
+
     return `
-      ${renderWorkspaceHead("Monitors", "Operations", "Continuous monitoring daemons.")}
-      ${panel("Monitor configuration", `<div class="tbl-empty">Configure via scripts/monitor/install-cron.sh &lt;target&gt;.</div>`)}
+      ${renderWorkspaceHead("Monitors", "Operations", "Continuous attack-surface monitoring.")}
+      ${panel("Enrolled targets", table + enroll)}
+      ${state.guideMode ? guidePanel("Adaptive cadence", "Each target is scanned every 4h while it keeps producing new assets. After ~3 quiet days the interval steps up (8h → 12h → 24h → 48h → 96h) to a 7-day ceiling; any new asset snaps it back to 4h. Monitor scans are passive + httpx only — loud active testing stays in the exploit cards.") : ""}
     `;
 };
+
+function fmtInterval(secs) {
+    secs = secs || 0;
+    if (secs >= 86400 && secs % 86400 === 0) return (secs / 86400) + "d";
+    return Math.round(secs / 3600) + "h";
+}
+function fmtWhen(s) {
+    if (!s) return "due now";
+    const d = new Date(s.replace(" ", "T") + "Z");
+    if (isNaN(d.getTime())) return s;
+    const diff = d.getTime() - Date.now();
+    if (diff <= 0) return "due now";
+    const h = Math.floor(diff / 3600000), m = Math.floor((diff % 3600000) / 60000);
+    return h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
+}
+function fmtQuiet(s) {
+    if (!s) return "—";
+    const d = new Date(s.replace(" ", "T") + "Z");
+    if (isNaN(d.getTime())) return "—";
+    return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000)) + "d";
+}
 
 PAGES.resources = function () {
     const s = state.apiState || {};
@@ -718,8 +783,26 @@ PAGES.resources = function () {
 };
 
 PAGES.settings = function () {
+    const c = state.config || {};
+    const proxy = c.opsec_http_proxy || "";
+    const rl = (c.opsec_rate_limit == null ? 50 : c.opsec_rate_limit);
+    const delay = c.opsec_delay || "";
+    const randUA = (c.opsec_random_agent !== false);
     return `
       ${renderWorkspaceHead("Settings", "Admin", "System configuration.")}
+      ${panel("OPSEC — rule #1 (applied to every target-touching scan)", `
+        <div class="form-grid">
+          <div><label class="form-label">HTTP/SOCKS proxy</label><input id="opsec-proxy" type="text" value="${escapeAttr(proxy)}" placeholder="socks5://127.0.0.1:9050" spellcheck="false"></div>
+          <div><label class="form-label">Rate limit (req/s)</label><input id="opsec-rl" type="number" value="${escapeAttr(String(rl))}" min="1"></div>
+          <div><label class="form-label">Per-request delay / jitter</label><input id="opsec-delay" type="text" value="${escapeAttr(delay)}" placeholder="200ms (monitor default)" spellcheck="false"></div>
+          <div><label class="form-label">Random User-Agent</label>
+            <label class="radio-pill ${randUA ? "selected" : ""}"><input id="opsec-rua" type="checkbox" ${randUA ? "checked" : ""} style="margin-right:6px;">rotate UA (off when a program UA is pinned)</label>
+          </div>
+        </div>
+        <div class="form-help">Proxy routes <em>every</em> tool (curl, httpx, nuclei, dnsx, nikto, agent runner). Rate limit + jitter throttle target-touching tools. Program-identity headers (e.g. <span class="mono">X-Intigriti-Username</span>) are attached automatically from your platform handles. Passive sources never touch the target.</div>
+        <div class="spacer-md"></div>
+        <button class="btn btn-primary" onclick="ReconForge.saveOpsec()">▸ Save OPSEC</button>
+      `)}
       ${panel("API keys", `
         <div class="form-grid">
           <div><label class="form-label">GitHub token</label><input type="password" placeholder="ghp_..."></div>
@@ -1114,6 +1197,9 @@ function saveIntake() {
     state.target = target;
     state.workspace = workspace;
     state.cyberbrainPath = cyberbrain || ("CyberBrain/BugBounty/" + target);
+    state.intakeDraft.target     = target;
+    state.intakeDraft.workspace  = workspace;
+    state.intakeDraft.cyberbrain = state.cyberbrainPath;
     LS.set("target", target);
     LS.set("workspace", workspace);
     LS.set("cyberbrainPath", state.cyberbrainPath);
@@ -1127,6 +1213,7 @@ function saveIntake() {
 
 function clearIntake() {
     state.target = null; state.workspace = null; state.cyberbrainPath = null;
+    state.intakeDraft = { target: "", program: "", workspace: "", cyberbrain: "", scope: "", oos: "" };
     LS.set("target", null); LS.set("workspace", null); LS.set("cyberbrainPath", null);
     consoleLog("log", "target cleared");
     renderShellChrome(); renderSidebar(); renderKillchain(); renderWorkspace();
@@ -1144,6 +1231,50 @@ function setRisk(mode) {
 function setPlatform(p) {
     consoleLog("select", "platform: " + p);
     toast("Platform " + p + " selected for export.", "info");
+}
+
+// ── Continuous monitoring (recon schedule) ───────────────────────
+async function refreshState() {
+    const r = await api("GET", "/api/state");
+    if (r.ok) { state.apiState = r.data && (r.data.data || r.data); renderWorkspace(); }
+}
+async function enrollMonitor() {
+    const el = document.getElementById("mon-domain");
+    const domain = ((el && el.value) || "").trim().toLowerCase();
+    if (!domain) { toast("Domain required.", "error"); return; }
+    const r = await api("POST", "/api/schedule", { domain });
+    if (r.ok) { consoleLog("success", "monitoring " + domain); toast("Monitoring " + domain, "success"); await refreshState(); }
+    else { toast("Enroll failed.", "error"); }
+}
+async function toggleMonitor(id, enabled) {
+    await api("PUT", "/api/schedule/" + id, { enabled: !!enabled });
+    await refreshState();
+}
+async function removeMonitor(id) {
+    await api("DELETE", "/api/schedule/" + id);
+    consoleLog("log", "monitor removed");
+    await refreshState();
+}
+
+// ── OPSEC settings ───────────────────────────────────────────────
+async function ensureConfig() {
+    const r = await api("GET", "/api/config");
+    if (r.ok) { state.config = r.data && (r.data.data || r.data); renderWorkspace(); }
+}
+async function saveOpsec() {
+    const rlEl = document.getElementById("opsec-rl");
+    const payload = {
+        opsec_http_proxy:   (document.getElementById("opsec-proxy").value || "").trim(),
+        opsec_rate_limit:   parseInt(rlEl.value, 10) || 50,
+        opsec_delay:        (document.getElementById("opsec-delay").value || "").trim(),
+        opsec_random_agent: document.getElementById("opsec-rua").checked,
+    };
+    const r = await api("PUT", "/api/config", payload);
+    if (r.ok) {
+        state.config = Object.assign({}, state.config || {}, payload);
+        consoleLog("success", "OPSEC config saved");
+        toast("OPSEC settings saved.", "success");
+    } else { toast("Save failed.", "error"); }
 }
 
 async function submitJob() {
@@ -1238,12 +1369,28 @@ document.addEventListener("keydown", (e) => {
     }
 });
 
+// Map of intake field id → draft key. Keeps the in-progress engagement form
+// in state so any re-render (selecting a risk mode, the 8s poll) repopulates
+// every field instead of blanking it.
+const INTAKE_FIELDS = {
+    "intake-target":     "target",
+    "intake-program":    "program",
+    "intake-workspace":  "workspace",
+    "intake-cyberbrain": "cyberbrain",
+    "intake-scope":      "scope",
+    "intake-oos":        "oos",
+};
+
 document.addEventListener("input", (e) => {
-    if (e.target && e.target.id === "palette-input") {
+    if (!e.target) return;
+    if (e.target.id === "palette-input") {
         state.palette.query = e.target.value;
         state.palette.selected = 0;
         renderPalette();
+        return;
     }
+    const key = INTAKE_FIELDS[e.target.id];
+    if (key) state.intakeDraft[key] = e.target.value;
 });
 
 // ── Public API exposed on window.ReconForge ──────────────────────
@@ -1251,6 +1398,8 @@ window.ReconForge = {
     login, logout,
     go: navigateTo,
     saveIntake, clearIntake, setRisk, setPlatform, submitJob,
+    enrollMonitor, toggleMonitor, removeMonitor,
+    saveOpsec,
     openPalette, closePalette, executePalette,
     toggleConsole, clearConsole,
     toggleGuide,

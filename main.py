@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ReconForge v2.0  —  Security Reconnaissance Orchestration Platform
+ReconForge v2.0 - Local-first bug-bounty recon operations console
 Single-file: stdlib HTTP + sqlite3 + threading + psutil.
 
 Usage:
@@ -18,10 +18,11 @@ import os, queue, re, secrets, shutil, signal, socket, sqlite3, ssl
 import subprocess, sys, tarfile, tempfile, threading, time, traceback
 import urllib.parse, urllib.request, urllib.error
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 try:
@@ -57,6 +58,7 @@ RESOURCE_INTERVAL  = 5
 RESOURCE_RETENTION = 3_600
 DYNAMIC_INTERVAL   = 30
 MONITOR_INTERVAL   = 10
+SCHEDULE_INTERVAL  = 60   # recon-schedule worker tick (s)
 BACKUP_INTERVAL    = 3_600
 CLEANUP_INTERVAL   = 3_600
 SESSION_CLEANUP    = 600
@@ -71,6 +73,31 @@ RATE_INCREMENT = 5
 DEFAULT_TLDS     = ["com","net","org","io","co","app","dev","us","uk","in","de"]
 DEFAULT_THREADS  = 50
 DEFAULT_WORDLIST = "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
+
+# Recon-monitor cadence. The scan interval is a function of how long a target
+# has been quiet (no new assets). A new asset resets "days quiet" to 0, pulling
+# the cadence back to the 4h floor; a quiet target backs off one band every
+# ~3 days up to a 7-day ceiling. (min_days_quiet, interval_seconds) — ascending.
+_HR = 3600
+MONITOR_BANDS = [
+    (0,   4  * _HR),
+    (3,   8  * _HR),
+    (6,   12 * _HR),
+    (9,   24 * _HR),
+    (12,  48 * _HR),
+    (15,  96 * _HR),
+    (18,  168 * _HR),   # 7-day cap
+]
+
+def _monitor_interval_for(days_quiet: float) -> int:
+    """Return the scan interval (seconds) for a target quiet this many days."""
+    interval = MONITOR_BANDS[0][1]
+    for min_days, secs in MONITOR_BANDS:
+        if days_quiet >= min_days:
+            interval = secs
+        else:
+            break
+    return interval
 
 # ═══════════════════════════════════════════════════════════
 #  GLOBAL STATE
@@ -174,6 +201,18 @@ CREATE TABLE IF NOT EXISTS monitors (
     last_result TEXT DEFAULT '',
     last_count INTEGER DEFAULT 0,
     seen_entries TEXT DEFAULT '[]',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS recon_schedule (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT UNIQUE NOT NULL,
+    program_slug TEXT,
+    enabled INTEGER DEFAULT 1,
+    interval_seconds INTEGER DEFAULT 14400,
+    next_run_at TEXT,
+    last_run_at TEXT,
+    last_new_asset_at TEXT,
+    last_delta_count INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS system_resources (
@@ -674,8 +713,11 @@ _DEFAULT_TOOLS: Dict[str, Dict] = {
     },
     "paramspider": {
         "name": "ParamSpider", "type": "param", "step": 10,
-        "cmd": "paramspider --domain $DOMAIN$ --exclude woff,png,svg,php,jpg --output $OUTPUT$",
-        "enabled": True, "max_concurrent": 2, "parse_mode": "lines",
+        # v3 removed --exclude/--output and writes results/<domain>.txt; -s streams
+        # parameterized URLs to stdout, captured via parse_mode "stdout". Uses
+        # $TARGET$ so the same template works in both the main and registry runners.
+        "cmd": "paramspider -d $TARGET$ -s",
+        "enabled": True, "max_concurrent": 2, "parse_mode": "stdout",
         "description": "Pull parameter URLs from archive sources (devanshbatham)",
     },
     "sqlmap": {
@@ -910,6 +952,11 @@ class Job:
         self.pause_event  = threading.Event()
         self.first_sub_event = threading.Event()
         self.skipped_steps: Set[str] = set()
+        # Monitor-mode = light, stealthy asset-discovery scan: passive enum →
+        # dnsx → httpx only. Skip the loud/active steps so a 4h cadence doesn't
+        # hammer the target or trip rate limits.
+        if self.options.get("monitor"):
+            self.skipped_steps |= {"nuclei", "nikto", "gowitness"}
         self._discovered: Set[str]   = set()
         self._disc_lock  = threading.Lock()
         self._logs: deque             = deque(maxlen=500)
@@ -1037,6 +1084,157 @@ def _complete_job(job: Job, status: str = "completed") -> None:
     with _lock:
         _jobs.pop(job.id, None)
     emit(f"{job.domain} → {status} ({n} subdomains)", "INFO", "pipeline")
+    # Push the run into CyberBrain + handle monitor scheduling. Never let this
+    # break job completion — the job already finished above.
+    try:
+        _post_complete(job, status)
+    except Exception as e:
+        emit(f"post-complete hook failed for {job.domain}: {e}", "ERROR", "pipeline")
+
+# ═══════════════════════════════════════════════════════════
+#  CYBERBRAIN HANDOFF + MONITOR SCHEDULING
+# ═══════════════════════════════════════════════════════════
+def _utcnow() -> datetime:
+    """Naive UTC now (non-deprecated equivalent of datetime.utcnow())."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+def _utcnow_sql() -> str:
+    """UTC timestamp in SQLite's 'YYYY-MM-DD HH:MM:SS' format — matches the
+    subdomains.created_at column so string comparison is chronological."""
+    return _utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+def _program_for(domain: str) -> Dict:
+    """Best-effort program dict for the manifest. Use the active program when it
+    actually authorizes this domain (correct scope + slug); otherwise synthesize
+    a minimal per-domain program so the run still groups sanely under <domain>/."""
+    prog = _active_program()
+    if prog is not None:
+        try:
+            if scope_guard.check(domain, prog).get("allowed"):
+                return prog
+        except Exception:
+            pass
+    return {"name": domain, "slug": _slugify_domain(domain),
+            "in_scope": [{"value": domain}], "out_of_scope": []}
+
+def _slugify_domain(domain: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", (domain or "").lower()).strip("-") or "unknown"
+
+def _emit_contract(job: Job, status: str):
+    """Emit the CyberBrain contract dir for a completed job. Returns the run dir
+    Path (or None). Mirrors the ctx/result shape in __main__.py:_cmd_contract."""
+    if not get_config("auto_emit_contract", True):
+        return None
+    out_root = get_config("reconforge_output_dir", os.path.join(_BASE, "out"))
+    os.environ["RECONFORGE_OUTPUT_DIR"] = os.path.expanduser(out_root)
+    from core.manifest_emitter import emit_run
+    ctx = SimpleNamespace(
+        job_id=job.id,
+        program=_program_for(job.domain),
+        inputs={"domain": job.domain, "mode": "monitor" if job.options.get("monitor") else ""},
+        db=get_db(),
+    )
+    result = SimpleNamespace(
+        job_id=job.id, domain=job.domain, status=status,
+        started_at=job.started_at, completed_at=job.completed_at,
+        agents={}, errors={}, total_cost_usd=0.0,
+    )
+    return emit_run(ctx, result)
+
+def _ingest_to_vault(run_dir) -> None:
+    """Hand the emitted run dir to the vault's own ingest tool. Draft-only;
+    --post-message posts the agent-inbox summary. Promotion to durable notes
+    still requires a separate gateway commit (single-writer policy)."""
+    if not get_config("auto_ingest_vault", True) or not run_dir:
+        return
+    vault = os.path.expanduser(get_config("cyberbrain_vault_path", "~/Documents/CyberBrain"))
+    ingest = os.path.join(vault, "tools", "ingest_recon.py")
+    if not os.path.exists(ingest):
+        emit(f"vault ingest not found at {ingest}; skipping", "WARNING", "cyberbrain")
+        return
+    try:
+        subprocess.run([sys.executable, ingest, "--input", str(run_dir), "--post-message"],
+                       timeout=300, capture_output=True, text=True)
+        emit(f"ingested {os.path.basename(str(run_dir))} → vault drafts", "INFO", "cyberbrain")
+    except Exception as e:
+        emit(f"vault ingest failed: {e}", "WARNING", "cyberbrain")
+
+def _notify_new_assets(domain: str, new_assets: List[str]) -> None:
+    """Fire ProjectDiscovery notify for newly-discovered assets."""
+    if not new_assets or not get_config("notify_on_new_assets", True):
+        return
+    if not shutil.which("notify"):
+        emit(f"{domain}: {len(new_assets)} new asset(s) (notify not installed)", "INFO", "monitor")
+        return
+    head = new_assets[:20]
+    body = f"[{domain}] {len(new_assets)} new asset(s)\n" + "\n".join(head)
+    if len(new_assets) > 20:
+        body += f"\n...and {len(new_assets) - 20} more"
+    try:
+        subprocess.run(["notify", "-bulk", "-id", f"monitor-{domain}"],
+                       input=body, text=True, timeout=60, capture_output=True)
+    except Exception as e:
+        emit(f"notify failed for {domain}: {e}", "WARNING", "monitor")
+
+def _post_complete(job: Job, status: str) -> None:
+    """After a job finishes: emit the contract, ingest to the vault, and — for
+    enrolled monitor targets — diff new assets, alert, and reschedule."""
+    sched = db_row("SELECT * FROM recon_schedule WHERE domain=?", (job.domain,))
+
+    # New-asset delta is computed off the enrolled target's last run boundary
+    # (UTC, same format as created_at → safe string compare). First run = baseline.
+    new_assets: List[str] = []
+    is_baseline = True
+    if sched is not None:
+        prev_boundary = sched["last_run_at"]
+        if prev_boundary:
+            is_baseline = False
+            rows = db_rows(
+                "SELECT subdomain FROM subdomains WHERE domain=? AND created_at > ? "
+                "ORDER BY subdomain", (job.domain, prev_boundary))
+            new_assets = [r["subdomain"] for r in rows]
+
+    # 1+2. Emit contract dir, drop the per-run delta in raw/ for easy review.
+    run_dir = None
+    try:
+        run_dir = _emit_contract(job, status)
+        if run_dir is not None and not is_baseline:
+            try:
+                with open(os.path.join(str(run_dir), "raw", "new-assets.txt"), "w",
+                          encoding="utf-8", newline="\n") as f:
+                    f.write("\n".join(new_assets) + ("\n" if new_assets else ""))
+            except Exception:
+                pass
+    except Exception as e:
+        emit(f"contract emit failed for {job.domain}: {e}", "WARNING", "cyberbrain")
+
+    # 3. Push to the vault (drafts + inbox message).
+    _ingest_to_vault(run_dir)
+
+    # 4. Alert on genuinely new assets (not the first-run baseline).
+    if new_assets and not is_baseline:
+        _notify_new_assets(job.domain, new_assets)
+
+    # 5. Reschedule the enrolled target per the quiet-band ladder.
+    if sched is not None:
+        now_sql = _utcnow_sql()
+        last_new = sched["last_new_asset_at"]
+        if new_assets or is_baseline:
+            last_new = now_sql            # reset the clock → 4h floor
+        try:
+            days_quiet = (_utcnow()
+                          - datetime.strptime(last_new, "%Y-%m-%d %H:%M:%S")).total_seconds() / 86400.0
+        except Exception:
+            days_quiet = 0.0
+        interval = _monitor_interval_for(days_quiet)
+        next_run = (_utcnow() + timedelta(seconds=interval)).strftime("%Y-%m-%d %H:%M:%S")
+        db_exec(
+            "UPDATE recon_schedule SET last_run_at=?, last_new_asset_at=?, "
+            "interval_seconds=?, next_run_at=?, last_delta_count=? WHERE domain=?",
+            (now_sql, last_new, interval, next_run, len(new_assets), job.domain))
+        if new_assets:
+            emit(f"{job.domain}: +{len(new_assets)} new — cadence reset to "
+                 f"{interval // 3600}h", "INFO", "monitor")
 
 # ═══════════════════════════════════════════════════════════
 #  SUBPROCESS HELPER
@@ -1049,7 +1247,8 @@ def run_proc(cmd: List[str], job: Job, tool_key: str,
 
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True)
+                                stderr=subprocess.PIPE, text=True,
+                                env=_opsec_env())
     except FileNotFoundError:
         return -1, "", f"{cmd[0]}: command not found"
     except Exception as e:
@@ -1281,6 +1480,7 @@ def _run_dnsx(job: Job) -> None:
             "$OUTPUT$": out,
             "$THREADS$": str(get_config("threads", DEFAULT_THREADS)),
         })
+        cmd += _opsec_flags("dnsx", job)
         job.log(f"[dnsx] resolving {n} hosts", "dnsx")
         rc, stdout, _ = run_proc(cmd, job, "dnsx")
 
@@ -1310,6 +1510,90 @@ def _run_dnsx(job: Job) -> None:
         job.mark_step("dnsx")
 
 # ── HTTP probing (step 3) ────────────────────────────────────
+def _program_headers() -> List[str]:
+    """Identifying headers the active program's platform requires/expects, built
+    from the wizard's platform_identities plus any manual extras. The doctrine
+    mandates these on every request (e.g. X-Intigriti-Username) — both for
+    program compliance and so our traffic is attributable, not anonymous-noise."""
+    headers: List[str] = [h for h in (get_config("program_headers", []) or []) if h]
+    prog = _active_program() or {}
+    platform = (prog.get("platform") or "").lower()
+    idents = get_config("platform_identities", {}) or {}
+    handle = idents.get(platform) or prog.get("platform_handle")
+    if handle:
+        if platform == "intigriti":
+            headers.append(f"X-Intigriti-Username: {handle}")
+        elif platform == "bugcrowd":
+            headers.append(f"X-Bugcrowd-Username: {handle}")
+        elif platform == "hackerone":
+            headers.append(f"User-Agent: {handle}-bb-research (hackerone.com/{handle})")
+    return headers
+
+def _opsec_rate_limit() -> int:
+    """Requests/second cap. Stealth-by-default per the doctrine (50); operators
+    raise it in Settings for authorized aggressive runs."""
+    rl = get_config("opsec_rate_limit", None)
+    return 50 if rl is None else int(rl)
+
+def _opsec_env() -> Optional[Dict[str, str]]:
+    """Child-process env with proxy vars set, so every tool that honors them
+    (curl, nikto/LWP, Go's net/http) routes through the configured proxy. Returns
+    None when no proxy is set so subprocesses inherit the parent env unchanged."""
+    proxy = get_config("opsec_http_proxy", "")
+    if not proxy:
+        return None
+    env = os.environ.copy()
+    for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+              "http_proxy", "https_proxy", "all_proxy"):
+        env[k] = proxy
+    return env
+
+def _opsec_flags(tool_key: str, job: "Job") -> List[str]:
+    """OPSEC flags appended to a tool's argv at run time. Only verified per-tool
+    flag syntax (httpx/nuclei/dnsx); other tools are covered by the proxy env in
+    run_proc. Rate-limited + program headers by default; random UA unless a
+    program User-Agent is pinned; optional proxy; jitter on monitor scans."""
+    headers = _program_headers()
+    has_ua = any(h.lower().startswith("user-agent:") for h in headers)
+    proxy = get_config("opsec_http_proxy", "")
+    rl = _opsec_rate_limit()
+    monitor = bool(job.options.get("monitor"))
+    flags: List[str] = []
+    if tool_key == "httpx":
+        if get_config("opsec_random_agent", True) and not has_ua:
+            flags.append("-random-agent")
+        if rl:
+            flags += ["-rl", str(rl)]
+        delay = get_config("opsec_delay", None)
+        if delay is None:
+            delay = "200ms" if monitor else ""
+        if delay:
+            flags += ["-delay", str(delay)]
+        if proxy:
+            flags += ["-http-proxy", proxy]
+        for h in headers:
+            flags += ["-H", h]
+    elif tool_key == "nuclei":
+        if rl:
+            flags += ["-rl", str(rl)]
+        if proxy:
+            flags += ["-proxy", proxy]
+        for h in headers:
+            flags += ["-H", h]
+    elif tool_key == "dnsx":
+        if rl:
+            flags += ["-rl", str(rl)]
+    return flags
+
+def _sync_opsec_proxy() -> None:
+    """Mirror the configured proxy into the agent-path runner so every execution
+    path (main pipeline + agent dispatch) shares one proxy setting."""
+    try:
+        from tools import runner as _runner
+        _runner.set_proxy(get_config("opsec_http_proxy", "") or "")
+    except Exception:
+        pass
+
 def _run_httpx(job: Job) -> None:
     if job.should_skip("httpx") or job.is_done("httpx"):
         return
@@ -1331,6 +1615,7 @@ def _run_httpx(job: Job) -> None:
             "$OUTPUT$": out,
             "$THREADS$": str(get_config("threads", DEFAULT_THREADS)),
         })
+        cmd += _opsec_flags("httpx", job)
         job.log(f"[httpx] probing {n} hosts", "httpx")
         run_proc(cmd, job, "httpx")
 
@@ -1432,6 +1717,7 @@ def _run_nuclei(job: Job) -> None:
             "$OUTPUT$": out,
             "$THREADS$": str(get_config("threads", DEFAULT_THREADS)),
         })
+        cmd += _opsec_flags("nuclei", job)
         job.log(f"[nuclei] scanning {len(rows)} targets", "nuclei")
         run_proc(cmd, job, "nuclei", timeout=7200)
 
@@ -1860,6 +2146,34 @@ def _monitor_worker() -> None:
             emit(f"Monitor error: {e}", "ERROR", "monitor")
         _shutdown.wait(MONITOR_INTERVAL)
 
+def _schedule_worker() -> None:
+    """Recon-monitor scheduler. Enqueues a light passive scan for each enrolled
+    target when it comes due; the per-run cadence (4h floor → 7d cap) is set on
+    completion by _post_complete. Scans still pass through scope_guard."""
+    while not _shutdown.is_set():
+        try:
+            due = db_rows(
+                "SELECT * FROM recon_schedule WHERE enabled=1 AND "
+                "(next_run_at IS NULL OR next_run_at <= ?)", (_utcnow_sql(),))
+            for row in due:
+                domain = row["domain"]
+                with _lock:
+                    inflight = any(j.domain == domain for j in _jobs.values())
+                if inflight:
+                    continue
+                if submit_domain(domain, "scheduler", {"monitor": True}):
+                    emit(f"scheduled monitor scan: {domain}", "INFO", "monitor")
+                # Provisional next_run prevents re-enqueue before the job lands;
+                # _post_complete overwrites it with the real band cadence.
+                interval = row["interval_seconds"] or MONITOR_BANDS[0][1]
+                provisional = (_utcnow()
+                               + timedelta(seconds=interval)).strftime("%Y-%m-%d %H:%M:%S")
+                db_exec("UPDATE recon_schedule SET next_run_at=? WHERE domain=?",
+                        (provisional, domain))
+        except Exception as e:
+            emit(f"Scheduler error: {e}", "ERROR", "monitor")
+        _shutdown.wait(SCHEDULE_INTERVAL)
+
 def _check_monitor(mon: sqlite3.Row) -> None:
     try:
         url = mon["url"]
@@ -1941,6 +2255,7 @@ def start_workers() -> None:
         (_resource_worker,         "resources"),
         (_dynamic_worker,          "dynamic"),
         (_monitor_worker,          "monitors"),
+        (_schedule_worker,         "scheduler"),
         (_backup_worker,           "autobackup"),
         (_cleanup_worker,          "cleanup"),
         (_session_cleanup_worker,  "session-gc"),
@@ -2057,6 +2372,8 @@ class ReconHandler(BaseHTTPRequestHandler):
         # monitors
         if path == "/api/monitors":
             return self._api_monitors_list()
+        if path == "/api/schedule":
+            return self._api_schedule_list()
         # resources / workers
         if path == "/api/resources":
             return self._api_resources()
@@ -2096,6 +2413,8 @@ class ReconHandler(BaseHTTPRequestHandler):
             return self._api_job_action(m.group(1), m.group(2), session)
         if path == "/api/monitors":
             return self._api_monitors_create()
+        if path == "/api/schedule":
+            return self._api_schedule_create()
         if path == "/api/users":
             if session.get("role") != "admin":
                 return self._err("Forbidden", 403)
@@ -2119,6 +2438,9 @@ class ReconHandler(BaseHTTPRequestHandler):
         m = re.match(r"^/api/monitors/(\d+)$", path)
         if m:
             return self._api_monitors_update(int(m.group(1)))
+        m = re.match(r"^/api/schedule/(\d+)$", path)
+        if m:
+            return self._api_schedule_update(int(m.group(1)))
         m = re.match(r"^/api/targets/([^/]+)$", path)
         if m:
             return self._api_target_update(urllib.parse.unquote(m.group(1)))
@@ -2133,6 +2455,9 @@ class ReconHandler(BaseHTTPRequestHandler):
         m = re.match(r"^/api/monitors/(\d+)$", path)
         if m:
             return self._api_monitors_delete(int(m.group(1)))
+        m = re.match(r"^/api/schedule/(\d+)$", path)
+        if m:
+            return self._api_schedule_delete(int(m.group(1)))
         m = re.match(r"^/api/targets/([^/]+)$", path)
         if m:
             return self._api_target_delete(urllib.parse.unquote(m.group(1)))
@@ -2299,6 +2624,7 @@ class ReconHandler(BaseHTTPRequestHandler):
             "running_jobs":   running,
             "queued_jobs":    pending_jobs,
             "completed_jobs": completed,
+            "schedule":       rows_to_list(db_rows("SELECT * FROM recon_schedule ORDER BY domain")),
             "stats":          stats,
             "workers":        workers,
             "resources":      resources,
@@ -2436,6 +2762,8 @@ class ReconHandler(BaseHTTPRequestHandler):
             "max_running_jobs","dynamic_mode","dyn_min_jobs","dyn_max_jobs",
             "threads","wordlist","tld_list","github_token","auto_backup",
             "backup_interval","cleanup_temp_h","cleanup_days","https_enabled",
+            "opsec_http_proxy","opsec_rate_limit","opsec_random_agent","opsec_delay",
+            "auto_ingest_vault","notify_on_new_assets","cyberbrain_vault_path",
         ]
         cfg = {f: get_config(f) for f in fields}
         cfg["tools"] = tools
@@ -2448,6 +2776,12 @@ class ReconHandler(BaseHTTPRequestHandler):
             "max_running_jobs","dynamic_mode","dyn_min_jobs","dyn_max_jobs",
             "threads","wordlist","tld_list","github_token","auto_backup",
             "backup_interval","cleanup_temp_h","cleanup_days",
+            # OPSEC (rule #1): applied to every target-touching tool the app runs.
+            "opsec_http_proxy","opsec_rate_limit","opsec_random_agent",
+            "opsec_delay","program_headers","platform_identities",
+            # CyberBrain handoff + monitoring.
+            "cyberbrain_vault_path","reconforge_output_dir","auto_emit_contract",
+            "auto_ingest_vault","notify_on_new_assets",
         }
         for k, v in body.items():
             if k in safe_keys:
@@ -2455,6 +2789,7 @@ class ReconHandler(BaseHTTPRequestHandler):
             elif k == "tools":
                 set_config("tools", v)
         init_tool_gates()
+        _sync_opsec_proxy()
         self._ok(msg="Config saved")
 
     # ── API: history / logs ──────────────────────────────────
@@ -2510,6 +2845,35 @@ class ReconHandler(BaseHTTPRequestHandler):
     def _api_monitors_delete(self, mon_id: int) -> None:
         db_exec("DELETE FROM monitors WHERE id=?", (mon_id,))
         self._ok(msg="Deleted")
+
+    # ── API: recon schedule (continuous monitoring) ──────────
+    def _api_schedule_list(self) -> None:
+        self._ok(rows_to_list(db_rows("SELECT * FROM recon_schedule ORDER BY domain")))
+
+    def _api_schedule_create(self) -> None:
+        body = self._body_json() or {}
+        domain = (body.get("domain") or "").strip().lower()
+        if not domain:
+            return self._err("domain is required")
+        prog = _active_program()
+        slug = (prog or {}).get("name") if prog else _slugify_domain(domain)
+        # Enroll due immediately (next_run_at NULL → picked up next scheduler tick).
+        db_exec(
+            "INSERT OR IGNORE INTO recon_schedule(domain,program_slug,enabled,interval_seconds) "
+            "VALUES(?,?,1,?)", (domain, slug, MONITOR_BANDS[0][1]))
+        self._ok(msg=f"Monitoring {domain}")
+
+    def _api_schedule_update(self, sid: int) -> None:
+        body = self._body_json() or {}
+        enabled = body.get("enabled")
+        if enabled is not None:
+            db_exec("UPDATE recon_schedule SET enabled=? WHERE id=?",
+                    (1 if enabled else 0, sid))
+        self._ok(msg="Updated")
+
+    def _api_schedule_delete(self, sid: int) -> None:
+        db_exec("DELETE FROM recon_schedule WHERE id=?", (sid,))
+        self._ok(msg="Removed")
 
     # ── API: resources / workers ─────────────────────────────
     def _api_resources(self) -> None:
@@ -3595,6 +3959,7 @@ def main() -> None:
     # Load config into cache
     get_config("max_running_jobs", 5)
     get_config("dynamic_mode", False)
+    _sync_opsec_proxy()   # share the OPSEC proxy with the agent-path runner
 
     # TLS
     ctx = None

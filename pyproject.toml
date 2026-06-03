@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "reconforge"
 version = "2.0.0-dev"
-description = "Agentic ATT&CK-aligned bug-bounty assistant"
+description = "Local-first bug-bounty recon, monitoring, and reporting console"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}

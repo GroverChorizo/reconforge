@@ -30,6 +30,15 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Importing readline (POSIX stdlib) silently upgrades input() with arrow
+# keys, line editing, and history — without it, typos in the wizard mean
+# starting the prompt over. No-op import on Windows builds that lack it.
+try:
+    import readline  # noqa: F401
+    _READLINE = True
+except ImportError:
+    _READLINE = False
+
 from tools import detect
 
 
@@ -61,11 +70,19 @@ def is_setup_complete() -> bool:
 def run_text_wizard(out=sys.stdout, in_=sys.stdin) -> int:
     """Walk the seven screens via plain prompts. Returns 0 on success."""
     def _say(*a, **kw): print(*a, file=out, flush=True, **kw)
+    # When driving a real TTY (the production path), route through input()
+    # so libreadline (imported above) gives arrow keys + history. The test
+    # suite passes io.StringIO for in_; fall back to readline() there.
+    use_input = (in_ is sys.stdin) and out is sys.stdout and sys.stdin.isatty()
+
     def _ask(prompt: str, default: str = "") -> str:
         suffix = f" [{default}]" if default else ""
-        _say(f"{prompt}{suffix}: ", end="")
         try:
-            line = in_.readline().rstrip("\n")
+            if use_input:
+                line = input(f"{prompt}{suffix}: ")
+            else:
+                _say(f"{prompt}{suffix}: ", end="")
+                line = in_.readline().rstrip("\n")
         except (EOFError, KeyboardInterrupt):
             return default
         return line or default
