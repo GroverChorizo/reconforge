@@ -3,13 +3,13 @@
   "version": "v0.1.0",
   "files": [
     {
-      "path": "${VAULT}/01-Programs/juiceshop/strategist_plan.md",
+      "path": "${VAULT}/01-Programs/local-lab/strategist_plan.md",
       "must_exist": true,
       "min_size_bytes": 400,
       "must_contain": ["Recommended Starting Tier", "OPSEC Notes"]
     },
     {
-      "glob": "${VAULT}/01-Programs/juiceshop/BUG-*.md",
+      "glob": "${VAULT}/01-Programs/local-lab/BUG-*.md",
       "min_count": 1
     }
   ],

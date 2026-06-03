@@ -40,7 +40,7 @@ def acme(db):
         db,
         name="ACME Program",
         platform="intigriti",
-        platform_handle="grover",
+        platform_handle="researcher",
         scope=[{"type": "wildcard", "value": "*.acme.com", "tier": 2}],
         out_of_scope=[{"type": "domain", "value": "careers.acme.com"}],
         bounty_ranges={"critical": [2000, 5000]},
@@ -164,7 +164,7 @@ class TestScopeCheck:
 
     def test_intigriti_header_attached(self, acme, db):
         r = P.scope_check(db, acme.slug, "api.acme.com")
-        assert r["headers"].get("X-Intigriti-Username") == "grover"
+        assert r["headers"].get("X-Intigriti-Username") == "researcher"
 
 
 # ── v2 dispatch ───────────────────────────────────────────────────

@@ -50,7 +50,7 @@ export VULN_CLASS=ssrf
 - CVSS 4.0 vector goes in a dedicated field
 
 ### Intigriti
-- Header MUST include `X-Intigriti-Username: grover` on all PoCs
+- Header MUST include `X-Intigriti-Username: researcher-handle` on all PoCs
 - They explicitly want the bullet structure in the body (Exec / Tech / Repro / CVSS / Impact / Remediation / Evidence)
 - Inline screenshots welcome
 

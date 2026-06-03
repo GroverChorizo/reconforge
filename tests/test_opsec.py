@@ -73,25 +73,25 @@ def test_rate_limit_configurable():
 
 # ── auto program-identity headers ────────────────────────────────────
 def test_program_headers_intigriti():
-    M.set_config("platform_identities", {"intigriti": "grover"})
+    M.set_config("platform_identities", {"intigriti": "researcher"})
     with patch.object(M, "_active_program", return_value={"platform": "intigriti"}):
-        assert "X-Intigriti-Username: grover" in M._program_headers()
+        assert "X-Intigriti-Username: researcher" in M._program_headers()
 
 
 def test_program_header_injected_into_httpx():
-    M.set_config("platform_identities", {"intigriti": "grover"})
+    M.set_config("platform_identities", {"intigriti": "researcher"})
     with patch.object(M, "_active_program", return_value={"platform": "intigriti"}):
         f = M._opsec_flags("httpx", _job())
     i = f.index("-H")
-    assert f[i + 1] == "X-Intigriti-Username: grover"
+    assert f[i + 1] == "X-Intigriti-Username: researcher"
 
 
 def test_hackerone_ua_suppresses_random_agent():
-    M.set_config("platform_identities", {"hackerone": "grover"})
+    M.set_config("platform_identities", {"hackerone": "researcher"})
     with patch.object(M, "_active_program", return_value={"platform": "hackerone"}):
         f = M._opsec_flags("httpx", _job())
     assert "-random-agent" not in f            # UA is pinned, don't randomize
-    assert any("User-Agent: grover-bb-research (hackerone.com/grover)" in x for x in f)
+    assert any("User-Agent: researcher-bb-research (hackerone.com/researcher)" in x for x in f)
 
 
 # ── proxy env ────────────────────────────────────────────────────────

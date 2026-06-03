@@ -15,12 +15,12 @@ const state = {
     apiState:       null,             // last /api/state response
     target:         null,             // active target domain
     workspace:      null,             // workspace name
-    cyberbrainPath: null,             // CyberBrain export root path
+    vaultPath:      null,             // notes vault export root path
     riskMode:       "passive",        // "passive" | "active" | "aggressive"
     // Intake form draft. Bound to every field on the Intake page and updated
     // on each keystroke so a re-render (e.g. selecting a risk mode) never wipes
     // in-progress input. Seeded from persisted state on boot.
-    intakeDraft:    { target: "", program: "", workspace: "", cyberbrain: "", scope: "", oos: "" },
+    intakeDraft:    { target: "", program: "", workspace: "", vault: "", scope: "", oos: "" },
     phase:          "target-intake",  // current methodology phase
     guideMode:      false,             // optional helper text toggle
     consoleEvents:  [],
@@ -77,7 +77,7 @@ const NAV = [
     ]},
     { id: "report", title: "Report", items: [
         { route: "export",      label: "Export"          },
-        { route: "cyberbrain",  label: "CyberBrain Sync" },
+        { route: "vault",       label: "Vault Sync" },
     ]},
     { id: "ops", title: "Operations", items: [
         { route: "jobs",        label: "Jobs"            },
@@ -102,7 +102,7 @@ const KILL_CHAIN = [
     { id: "map",      label: "Map",      routes: ["surface", "fingerprint", "params", "js"] },
     { id: "test",     label: "Test",     routes: ["xss", "cors", "lfi", "sqli", "auth", "takeover", "exposure"] },
     { id: "evidence", label: "Evidence", routes: ["findings", "notes", "artifacts", "timeline"] },
-    { id: "report",   label: "Report",   routes: ["export", "cyberbrain"] },
+    { id: "report",   label: "Report",   routes: ["export", "vault"] },
 ];
 
 // ── API helper ───────────────────────────────────────────────────
@@ -127,12 +127,12 @@ async function boot() {
     state.consoleState   = LS.get("consoleState", "expanded");
     state.target         = LS.get("target", null);
     state.workspace      = LS.get("workspace", null);
-    state.cyberbrainPath = LS.get("cyberbrainPath", null);
+    state.vaultPath      = LS.get("vaultPath", null);
     state.riskMode       = LS.get("riskMode", "passive");
     // Seed the intake draft so a returning operator sees their saved target.
     state.intakeDraft.target     = state.target || "";
     state.intakeDraft.workspace  = state.workspace || "";
-    state.intakeDraft.cyberbrain = state.cyberbrainPath || "";
+    state.intakeDraft.vault = state.vaultPath || "";
 
     const r = await api("GET", "/api/state");
     if (r.status === 401 || !r.ok) {
@@ -401,8 +401,8 @@ PAGES.intake = function () {
                   <input id="intake-workspace" type="text" value="${escapeAttr(d.workspace)}" placeholder="acme-com" spellcheck="false">
                 </div>
                 <div>
-                  <label class="form-label">CyberBrain path</label>
-                  <input id="intake-cyberbrain" type="text" value="${escapeAttr(d.cyberbrain)}" placeholder="CyberBrain/BugBounty/acme.com">
+                  <label class="form-label">Vault path</label>
+                  <input id="intake-vault" type="text" value="${escapeAttr(d.vault)}" placeholder="ResearchVault/BugBounty/acme.com">
                 </div>
                 <div class="full">
                   <label class="form-label">Scope rules</label>
@@ -436,7 +436,7 @@ PAGES.intake = function () {
             <div class="status-panel">
               <dt>Operator</dt><dd>${escapeHTML(state.user || "—")} <span class="badge badge-muted">${escapeHTML(state.role || "—")}</span></dd>
               <dt>Workspace</dt><dd>${escapeHTML(state.workspace || "—")}</dd>
-              <dt>Export root</dt><dd class="mono" style="font-size:11px;">${escapeHTML(state.cyberbrainPath || "—")}</dd>
+              <dt>Export root</dt><dd class="mono" style="font-size:11px;">${escapeHTML(state.vaultPath || "—")}</dd>
             </div>
           `)}
         </div>
@@ -579,14 +579,14 @@ PAGES.findings = function () {
     return `
       ${renderWorkspaceHead("Findings", "Evidence", "Confirmed and in-review submissions.")}
       ${panel("Findings board", `<div class="tbl-empty">No findings yet. They'll appear here as the agent layer + report scripts produce them.</div>`)}
-      ${state.guideMode ? guidePanel("Pipeline", "Confirmed findings flow: scripts/vuln/* → /api/v2 findings → this board → scripts/report/draft-report.sh → CyberBrain Export. Status moves through draft → review → submitted → triaged.") : ""}
+      ${state.guideMode ? guidePanel("Pipeline", "Confirmed findings flow: scripts/vuln/* -> /api/v2 findings -> this board -> scripts/report/draft-report.sh -> vault export. Status moves through draft -> review -> submitted -> triaged.") : ""}
     `;
 };
 
 PAGES.notes = function () {
     return `
       ${renderWorkspaceHead("Notes", "Evidence", "Session notes and operator commentary.")}
-      ${panel("Session notes", `<textarea style="width:100%; min-height: 240px; font-family: var(--font-mono);" placeholder="paste payloads, observations, follow-ups…"></textarea><div class="spacer-sm"></div><div style="display:flex; gap:8px;"><button class="btn btn-primary" onclick="ReconForge.toast('Notes saved to workspace.', 'success')">▸ Save</button><button class="btn btn-ghost" onclick="ReconForge.toast('Note exported to CyberBrain.', 'success')">Export to CyberBrain</button></div>`)}
+      ${panel("Session notes", `<textarea style="width:100%; min-height: 240px; font-family: var(--font-mono);" placeholder="paste payloads, observations, follow-ups…"></textarea><div class="spacer-sm"></div><div style="display:flex; gap:8px;"><button class="btn btn-primary" onclick="ReconForge.toast('Notes saved to workspace.', 'success')">▸ Save</button><button class="btn btn-ghost" onclick="ReconForge.toast('Note exported to vault.', 'success')">Export to vault</button></div>`)}
     `;
 };
 
@@ -637,28 +637,28 @@ PAGES.export = function () {
           `)}
         </div>
         <div>
-          ${renderCyberBrainPanel()}
+          ${renderVaultPanel()}
         </div>
       </div>
     `;
 };
 
-PAGES.cyberbrain = function () {
+PAGES.vault = function () {
     return `
-      ${renderWorkspaceHead("CyberBrain Sync", "Report", "Push workspace artifacts into the Obsidian vault.")}
+      ${renderWorkspaceHead("Vault Sync", "Report", "Push workspace artifacts into your notes vault.")}
       <div class="workspace-cols">
         <div>
-          ${renderCyberBrainPanel()}
+          ${renderVaultPanel()}
         </div>
         <div>
           ${panel("Sync controls", `
             <div class="status-panel">
-              <dt>Vault root</dt><dd class="mono" style="font-size:11px;">${escapeHTML(state.cyberbrainPath || "—")}</dd>
+              <dt>Vault root</dt><dd class="mono" style="font-size:11px;">${escapeHTML(state.vaultPath || "—")}</dd>
               <dt>Last sync</dt><dd class="text-mute">never</dd>
               <dt>Pending</dt><dd>0 files</dd>
             </div>
             <div class="spacer-md"></div>
-            <button class="btn btn-primary" onclick="ReconForge.toast('CyberBrain sync triggered.', 'success')">▸ Sync now</button>
+            <button class="btn btn-primary" onclick="ReconForge.toast('Vault sync triggered.', 'success')">▸ Sync now</button>
           `)}
         </div>
       </div>
@@ -735,7 +735,7 @@ PAGES.monitors = function () {
         <input id="mon-domain" type="text" placeholder="example.com" spellcheck="false" style="flex:1;">
         <button class="btn btn-primary" onclick="ReconForge.enrollMonitor()">▸ Monitor target</button>
       </div>
-      <div class="form-help">Passive enum + httpx on a 4h→7d adaptive cadence. New assets reset the cadence to 4h, fire a <span class="mono">notify</span> alert, and flow to CyberBrain as review drafts. Scope Guard gates every scan.</div>
+      <div class="form-help">Passive enum + httpx on a 4h->7d adaptive cadence. New assets reset the cadence to 4h, fire a <span class="mono">notify</span> alert, and flow to the notes vault as review drafts. Scope Guard gates every scan.</div>
     `;
 
     return `
@@ -881,7 +881,7 @@ function renderTargetStatusPanel() {
         <dt>Scope</dt>     <dd>${state.target ? `<span class="badge badge-success">VALIDATED</span>` : `<span class="badge badge-muted">PENDING</span>`}</dd>
         <dt>Risk mode</dt> <dd><span class="risk-badge" data-risk="${state.riskMode}">${state.riskMode.toUpperCase()}</span></dd>
         <dt>Workspace</dt> <dd>${escapeHTML(state.workspace || "—")}</dd>
-        <dt>Export</dt>    <dd class="mono" style="font-size: 11px;">${escapeHTML(state.cyberbrainPath || "—")}</dd>
+        <dt>Export</dt>    <dd class="mono" style="font-size: 11px;">${escapeHTML(state.vaultPath || "—")}</dd>
       </div>
     `);
 }
@@ -926,9 +926,9 @@ function renderEvidenceTimeline(events) {
     `);
 }
 
-function renderCyberBrainPanel() {
-    const root = state.cyberbrainPath || "CyberBrain/BugBounty/" + (state.workspace || "<workspace>");
-    return panel("CyberBrain export", `
+function renderVaultPanel() {
+    const root = state.vaultPath || "ResearchVault/BugBounty/" + (state.workspace || "<workspace>");
+    return panel("Vault export", `
       <div class="vault">
         <div class="vault-path">${escapeHTML(root)}</div>
         <ul>
@@ -1023,7 +1023,7 @@ function renderMethodologyPage(routeId, title, group, defaultRisk, commands) {
             phase: title,
             risk: c.risk || defaultRisk,
             target: state.target || "<target>",
-            outputDir: cyberbrainSub(routeId),
+            outputDir: vaultSub(routeId),
             label: c.label,
             cmd: c.cmd,
             note: c.note,
@@ -1067,8 +1067,8 @@ function renderForge(opts) {
     `;
 }
 
-function cyberbrainSub(route) {
-    const base = state.cyberbrainPath || ("CyberBrain/BugBounty/" + (state.workspace || "<workspace>"));
+function vaultSub(route) {
+    const base = state.vaultPath || ("ResearchVault/BugBounty/" + (state.workspace || "<workspace>"));
     return base + "/02_Recon/" + route + "/";
 }
 
@@ -1192,17 +1192,17 @@ function executePalette(i) {
 function saveIntake() {
     const target    = (document.getElementById("intake-target").value || "").trim();
     const workspace = (document.getElementById("intake-workspace").value || "").trim() || target;
-    const cyberbrain = (document.getElementById("intake-cyberbrain").value || "").trim();
+    const vault = (document.getElementById("intake-vault").value || "").trim();
     if (!target) { toast("Target domain required.", "error"); return; }
     state.target = target;
     state.workspace = workspace;
-    state.cyberbrainPath = cyberbrain || ("CyberBrain/BugBounty/" + target);
+    state.vaultPath = vault || ("ResearchVault/BugBounty/" + target);
     state.intakeDraft.target     = target;
     state.intakeDraft.workspace  = workspace;
-    state.intakeDraft.cyberbrain = state.cyberbrainPath;
+    state.intakeDraft.vault = state.vaultPath;
     LS.set("target", target);
     LS.set("workspace", workspace);
-    LS.set("cyberbrainPath", state.cyberbrainPath);
+    LS.set("vaultPath", state.vaultPath);
     consoleLog("select", "target loaded: " + target);
     renderShellChrome();
     renderSidebar();
@@ -1212,9 +1212,9 @@ function saveIntake() {
 }
 
 function clearIntake() {
-    state.target = null; state.workspace = null; state.cyberbrainPath = null;
-    state.intakeDraft = { target: "", program: "", workspace: "", cyberbrain: "", scope: "", oos: "" };
-    LS.set("target", null); LS.set("workspace", null); LS.set("cyberbrainPath", null);
+    state.target = null; state.workspace = null; state.vaultPath = null;
+    state.intakeDraft = { target: "", program: "", workspace: "", vault: "", scope: "", oos: "" };
+    LS.set("target", null); LS.set("workspace", null); LS.set("vaultPath", null);
     consoleLog("log", "target cleared");
     renderShellChrome(); renderSidebar(); renderKillchain(); renderWorkspace();
 }
@@ -1376,7 +1376,7 @@ const INTAKE_FIELDS = {
     "intake-target":     "target",
     "intake-program":    "program",
     "intake-workspace":  "workspace",
-    "intake-cyberbrain": "cyberbrain",
+    "intake-vault": "vault",
     "intake-scope":      "scope",
     "intake-oos":        "oos",
 };

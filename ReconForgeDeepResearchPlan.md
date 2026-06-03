@@ -1,6 +1,6 @@
 # ReconForge research, modern recon tooling, and an Arch Linux bug bounty lab
 
-> **Important up-front finding on Deliverable 1.** The repository at `https://github.com/GroverChorizo/reconforge` could not be retrieved by any means available during this research: the repo page, the GitHub API endpoint, raw README URLs on both `main` and `master`, the user profile page, and every search engine query for `"GroverChorizo" reconforge` all returned no data. The most likely explanations are that the repository is **private**, was **renamed/deleted**, or the **username/repo spelling differs** from what was provided. No third-party site references it either. To unblock a faithful README, please verify the URL/spelling, make the repo public, or paste the entry script + install script into a follow-up so the analysis can be grounded in real code.
+> **Important up-front finding on Deliverable 1.** The repository at `https://github.com/example-org/reconforge` could not be retrieved by any means available during this research: the repo page, the GitHub API endpoint, raw README URLs on both `main` and `master`, the user profile page, and every search engine query for `"example-org" reconforge` all returned no data. The most likely explanations are that the repository is **private**, was **renamed/deleted**, or the **username/repo spelling differs** from what was provided. No third-party site references it either. To unblock a faithful README, please verify the URL/spelling, make the repo public, or paste the entry script + install script into a follow-up so the analysis can be grounded in real code.
 >
 > Because the user explicitly asked for a *comprehensive README and user guide* anyway, this report includes a **production-quality README template** (Deliverable 1) built around the conventions of comparable recon frameworks (reconftw, Reconx, Reconator, FinalRecon). Replace the bracketed `[…]` placeholders once the actual scripts are visible. Deliverables 2 and 3 are fully grounded in current research.
 
@@ -39,7 +39,7 @@ It is **not** an exploit framework. It does not pop shells. It surfaces attack s
 
 ```bash
 # 1. Clone
-git clone https://github.com/GroverChorizo/reconforge.git
+git clone https://github.com/example-org/reconforge.git
 cd reconforge
 
 # 2. Install dependencies (Arch / Debian / macOS auto-detected)
@@ -687,7 +687,7 @@ For testing internal apps, a Docker bridge network running vulnerable targets is
 
 ```bash
 docker network create --driver bridge --subnet 172.30.0.0/16 lab
-docker run -d --network lab --name juice  bkimminich/juice-shop
+docker run -d --network lab --name local-lab  example/vulnerable-lab
 docker run -d --network lab --name dvwa   vulnerables/web-dvwa
 docker run -d --network lab --name webgoat webgoat/goatandwolf
 ```
@@ -762,7 +762,7 @@ sudo pacman -S tmux zellij
 tmux new -s recon       # detach: Ctrl-b d ; reattach: tmux a -t recon
 ```
 
-For notes, **Obsidian** (`yay -S obsidian`) with markdown vaults is the strongest pick — graph view, plugins, easy git-backed sync. Joplin, Logseq, and plain markdown + neovim are reasonable alternatives.
+For notes, a markdown vault with git-backed sync is the strongest pick. Local-first note tools and plain markdown + an editor are reasonable alternatives.
 
 A standardized workspace layout makes diffing reruns trivial:
 

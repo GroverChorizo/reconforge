@@ -5,7 +5,7 @@ For each non-dup non-child finding the Analyst scored, generate:
   * A polished title and 2-sentence executive summary (via Opus)
   * One submission draft per platform in ``program.platforms`` (Python
     formatters in ``submissions/<platform>.py``)
-  * A ``BUG-XXX.md`` note in ``BugBountyVault/01-Programs/<program>/``
+  * A ``BUG-XXX.md`` note in ``ResearchVault/01-Programs/<program>/``
     with all platform drafts as collapsible sections
   * One row per draft in the ``submission_drafts`` table
 
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agents.base import BaseAgent, AgentContext, AgentResult, LLMError, CostCapExceeded
-from obsidian import vault as obsvault
+from vault import writer as vault_writer
 from submissions import REGISTRY as PLATFORM_FORMATTERS
 
 
@@ -77,7 +77,7 @@ class ReporterAgent(BaseAgent):
                 drafts_count += 1
 
             try:
-                path = obsvault.write_finding(program_name, f, per_platform, overwrite=True)
+                path = vault_writer.write_finding(program_name, f, per_platform, overwrite=True)
                 notes_written.append(str(path))
             except Exception as e:
                 errors.append(f"{f['bug_id']}: vault write failed: {e}")
@@ -175,11 +175,11 @@ class ReporterAgent(BaseAgent):
     # ── persistence ───────────────────────────────────────────────
     def _insert_draft_row(self, ctx: AgentContext, finding_id: int, draft) -> None:
         program_name = (ctx.program or {}).get("name") or ""
-        rel_path = f"01-Programs/{obsvault.sanitize_name(program_name)}/"
+        rel_path = f"01-Programs/{vault_writer.sanitize_name(program_name)}/"
         # Path joined later — we store the relative dir + bug_id filename.
         ctx.db.execute(
             "INSERT INTO submission_drafts(finding_id, platform, title, body_md, "
-            "severity, weakness, obsidian_path, human_approved, created_at) "
+            "severity, weakness, vault_path, human_approved, created_at) "
             "VALUES (?,?,?,?,?,?,?, 0, datetime('now'))",
             (finding_id, draft.platform, draft.title, draft.body_md,
              draft.severity, draft.weakness, rel_path),

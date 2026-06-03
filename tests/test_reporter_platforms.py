@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT))
 from agents.base import AgentContext
 from agents.reporter import ReporterAgent, _parse_reporter_json
 from db.migrations import runner as MIG
-from obsidian import vault as obsvault
+from vault import writer as vault_writer
 from submissions import REGISTRY as FORMATTERS
 from submissions.common import Draft
 
@@ -45,7 +45,7 @@ def migrated_db(tmp_path):
 @pytest.fixture
 def vault_dir(tmp_path, monkeypatch):
     vroot = tmp_path / "Vault"
-    monkeypatch.setattr(obsvault, "vault_root", lambda: vroot)
+    monkeypatch.setattr(vault_writer, "vault_root", lambda: vroot)
     return vroot
 
 
@@ -152,7 +152,7 @@ class TestWriteFinding:
 
     def test_writes_bug_md_under_program(self, vault_dir):
         finding = dict(_FINDING, status="new")
-        path = obsvault.write_finding("acme", finding, drafts={
+        path = vault_writer.write_finding("acme", finding, drafts={
             "hackerone": FORMATTERS["hackerone"](finding, _PROGRAM)
         }, overwrite=True)
         assert path.exists()
@@ -163,7 +163,7 @@ class TestWriteFinding:
         assert "hackerone" in content.lower()
 
     def test_writes_into_sanitized_program_dir(self, vault_dir):
-        path = obsvault.write_finding("ACME Inc.", dict(_FINDING),
+        path = vault_writer.write_finding("ACME Inc.", dict(_FINDING),
                                        drafts={}, overwrite=True)
         # Sanitized: lowercase, non-alnum → -
         assert "01-Programs" in str(path)

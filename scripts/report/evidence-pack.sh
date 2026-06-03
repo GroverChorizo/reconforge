@@ -11,7 +11,7 @@
 
 set -o pipefail
 
-: "${RECONFORGE_OUTPUT_DIR:=$HOME/Documents/CyberBrain/03-Research/Recon}"
+: "${RECONFORGE_OUTPUT_DIR:=$HOME/Documents/ResearchVault/03-Research/Recon}"
 [ -z "${TARGET:-}" ]    && { echo "TARGET required"; exit 2; }
 [ -z "${DATESTAMP:-}" ] && { echo "DATESTAMP required"; exit 2; }
 

@@ -181,7 +181,7 @@ def _cmd_wizard(argv: list[str]) -> int:
     # Phase 11 will replace this with the Textual TUI.
     print("reconforge wizard: not yet implemented (Phase 11). "
           "For now, edit scopes/*.json and set the active program via:")
-    print("  python -c \"import main as M; M.init_db(); M.set_config('active_program','scopes/rivian.json')\"")
+    print("  python -c \"import main as M; M.init_db(); M.set_config('active_program','scopes/examplecorp.json')\"")
     return 0
 
 

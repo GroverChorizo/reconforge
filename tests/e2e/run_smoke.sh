@@ -8,13 +8,13 @@
 #
 # Required env:
 #   RECONFORGE_DB     path to recon.db inside the container or host
-#   RECONFORGE_VAULT  path to BugBountyVault
+#   RECONFORGE_VAULT  path to ResearchVault
 #   JOB_ID            the job_id of the test scan
 #
 set -euo pipefail
 
 DB="${RECONFORGE_DB:-${HOME}/.config/reconforge/recon.db}"
-VAULT="${RECONFORGE_VAULT:-${HOME}/Documents/BugBountyVault}"
+VAULT="${RECONFORGE_VAULT:-${HOME}/Documents/ResearchVault}"
 JOB_ID="${JOB_ID:-}"
 PORT="${RECONFORGE_PORT:-8342}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -45,14 +45,14 @@ echo
 
 # ── files ─────────────────────────────────────────────────────
 echo "Vault files:"
-strategist_md="${VAULT}/01-Programs/juiceshop/strategist_plan.md"
+strategist_md="${VAULT}/01-Programs/local-lab/strategist_plan.md"
 if [ -f "$strategist_md" ] && grep -q "Recommended Starting Tier" "$strategist_md"; then
   check "strategist_plan.md present" 0
 else
   check "strategist_plan.md present" 1 "missing or empty"
 fi
 
-bug_count=$(ls "${VAULT}/01-Programs/juiceshop"/BUG-*.md 2>/dev/null | wc -l || echo 0)
+bug_count=$(ls "${VAULT}/01-Programs/local-lab"/BUG-*.md 2>/dev/null | wc -l || echo 0)
 if [ "$bug_count" -ge 1 ]; then
   check "BUG-*.md notes present" 0 "$bug_count notes"
 else

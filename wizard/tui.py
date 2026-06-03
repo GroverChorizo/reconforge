@@ -279,7 +279,7 @@ class VaultPickScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Label("Vault Directory", classes="title")
-        default = str(Path.home() / "Documents" / "BugBountyVault")
+        default = str(Path.home() / "Documents" / "ResearchVault")
         prior_vault = (self.app.state.get("vault") or {}).get("path") or default
         yield Input(value=prior_vault, id="vault")
         yield _nav_row(next_label="Finish")

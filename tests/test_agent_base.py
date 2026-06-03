@@ -360,32 +360,32 @@ class TestOllamaThroughBaseAgent:
 class TestScopeGuardAgent:
 
     @pytest.fixture
-    def rivian_program(self):
-        return json.loads((ROOT / "scopes" / "rivian.json").read_text(encoding="utf-8"))
+    def examplecorp_program(self):
+        return json.loads((ROOT / "scopes" / "examplecorp.json").read_text(encoding="utf-8"))
 
-    def test_in_scope_allowed(self, ctx, rivian_program):
-        ctx.program = rivian_program
-        ctx.inputs = {"target": "api.rivian.com"}
+    def test_in_scope_allowed(self, ctx, examplecorp_program):
+        ctx.program = examplecorp_program
+        ctx.inputs = {"target": "api.examplecorp.com"}
         agent = ScopeGuardAgent(db=ctx.db)
         result = agent.run(ctx)
         assert result.success is True
         assert result.output["tier"] == 2
-        assert result.output["headers"]["X-Intigriti-Username"] == "grover"
+        assert result.output["headers"]["X-Intigriti-Username"] == "researcher"
         # Memory should record the decision
         last = agent.recall(ctx, "last_check")
         assert last["allowed"] is True
 
-    def test_out_of_scope_rejected(self, ctx, rivian_program):
-        ctx.program = rivian_program
-        ctx.inputs = {"target": "careers.rivian.com"}
+    def test_out_of_scope_rejected(self, ctx, examplecorp_program):
+        ctx.program = examplecorp_program
+        ctx.inputs = {"target": "careers.examplecorp.com"}
         agent = ScopeGuardAgent(db=ctx.db)
         result = agent.run(ctx)
         assert result.success is False
         assert "out_of_scope" in result.error
 
-    def test_no_llm_no_cost(self, ctx, rivian_program):
-        ctx.program = rivian_program
-        ctx.inputs = {"target": "api.rivian.com"}
+    def test_no_llm_no_cost(self, ctx, examplecorp_program):
+        ctx.program = examplecorp_program
+        ctx.inputs = {"target": "api.examplecorp.com"}
         agent = ScopeGuardAgent(db=ctx.db)
         result = agent.run(ctx)
         assert result.cost_usd == 0.0
@@ -395,9 +395,9 @@ class TestScopeGuardAgent:
         ).fetchone()
         assert rows[0] == 0
 
-    def test_emit_event_fired(self, ctx, rivian_program):
-        ctx.program = rivian_program
-        ctx.inputs = {"target": "api.rivian.com"}
+    def test_emit_event_fired(self, ctx, examplecorp_program):
+        ctx.program = examplecorp_program
+        ctx.inputs = {"target": "api.examplecorp.com"}
         captured = []
         agent = ScopeGuardAgent(db=ctx.db, emit_fn=lambda k, d: captured.append((k, d)))
         agent.run(ctx)
@@ -412,8 +412,8 @@ class TestCLI:
     def test_scope_guard_agent_cli_allow(self):
         r = subprocess.run(
             [sys.executable, "-m", "agents.scope_guard", "test",
-             "--target", "api.rivian.com",
-             "--program", "scopes/rivian.json"],
+             "--target", "api.examplecorp.com",
+             "--program", "scopes/examplecorp.json"],
             cwd=str(ROOT), capture_output=True, text=True, timeout=15,
         )
         assert r.returncode == 0, r.stderr
@@ -423,8 +423,8 @@ class TestCLI:
     def test_scope_guard_agent_cli_reject(self):
         r = subprocess.run(
             [sys.executable, "-m", "agents.scope_guard", "test",
-             "--target", "careers.rivian.com",
-             "--program", "scopes/rivian.json"],
+             "--target", "careers.examplecorp.com",
+             "--program", "scopes/examplecorp.json"],
             cwd=str(ROOT), capture_output=True, text=True, timeout=15,
         )
         assert r.returncode == 1

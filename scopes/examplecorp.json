@@ -1,0 +1,27 @@
+{
+  "name": "examplecorp",
+  "platform": "intigriti",
+  "platform_handle": "researcher",
+  "policy_url": "https://example.invalid/program-policy",
+  "in_scope": [
+    {"type": "domain",   "value": "examplecorp.com",                                          "tier": 1},
+    {"type": "domain",   "value": "business.examplecorp.com",                                 "tier": 1},
+    {"type": "wildcard", "value": "*.examplecorp.com",                                        "tier": 2}
+  ],
+  "out_of_scope": [
+    {"type": "domain", "value": "careers.examplecorp.com"},
+    {"type": "domain", "value": "media.examplecorp.com"},
+    {"type": "domain", "value": "stories.examplecorp.com"},
+    {"type": "domain", "value": "demo.examplecorp.com"},
+    {"type": "domain", "value": "feedback.examplecorp.com"},
+    {"type": "domain", "value": "internal.examplecorp.com"},
+    {"type": "domain", "value": "view.e.examplecorp.com"},
+    {"type": "domain", "value": "cloud.e.examplecorp.com"}
+  ],
+  "bounty_ranges": {
+    "critical": [3500, 5000],
+    "high":     [1000, 3500],
+    "medium":   [250, 1000],
+    "low":      [100, 250]
+  }
+}

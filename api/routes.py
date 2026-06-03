@@ -150,7 +150,7 @@ def finding_detail(db: sqlite3.Connection, finding_id: int) -> Optional[Dict[str
 def submission_detail(db: sqlite3.Connection, draft_id: int) -> Optional[Dict[str, Any]]:
     row = db.execute(
         "SELECT id, finding_id, platform, title, body_md, severity, weakness, "
-        "obsidian_path, human_approved, created_at "
+        "vault_path, human_approved, created_at "
         "FROM submission_drafts WHERE id=?", (draft_id,),
     ).fetchone()
     if row is None:
@@ -169,7 +169,7 @@ def submission_detail(db: sqlite3.Connection, draft_id: int) -> Optional[Dict[st
         "cvss_vector": f_row["cvss_vector"] if f_row else None,
         "cvss_score": f_row["cvss_score"] if f_row else None,
         "vuln_class": f_row["vuln_class"] if f_row else None,
-        "obsidian_path": row["obsidian_path"],
+        "vault_path": row["vault_path"],
         "human_approved": bool(row["human_approved"]),
         "created_at": row["created_at"],
     }

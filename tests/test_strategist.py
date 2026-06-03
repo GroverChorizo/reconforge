@@ -1,5 +1,5 @@
 """
-Tests for Phase 6 — StrategistAgent + obsidian/vault.py minimum.
+Tests for Phase 6 — StrategistAgent + vault/writer.py minimum.
 
 All Opus calls are mocked. Verification covers:
   - schema validation (pass + fail)
@@ -28,7 +28,7 @@ from agents.base import AgentContext
 from agents.strategist import (
     StrategistAgent, StrategistPlan, _parse_plan_json, _render_plan_markdown,
 )
-from obsidian import vault as obsvault
+from vault import writer as vault_writer
 from db.migrations import runner as MIG
 
 
@@ -51,8 +51,8 @@ def migrated_db(tmp_path):
 @pytest.fixture
 def vault_dir(tmp_path, monkeypatch):
     """Redirect vault root to a tmp dir without touching real ~/Documents."""
-    vroot = tmp_path / "BugBountyVault"
-    monkeypatch.setattr(obsvault, "vault_root", lambda: vroot)
+    vroot = tmp_path / "ResearchVault"
+    monkeypatch.setattr(vault_writer, "vault_root", lambda: vroot)
     return vroot
 
 
@@ -92,7 +92,7 @@ def _mock_plan(program):
         "tiers": tiers,
         "reasoning": "Tier 0 dev/admin first because 10× bug probability.",
         "recommended_starting_tier": 0,
-        "opsec_notes": "X-Intigriti-Username: grover required.",
+        "opsec_notes": "X-Intigriti-Username: researcher required.",
         "version": "v1",
     }
 
@@ -319,18 +319,18 @@ class TestCostTracking:
 class TestVaultWriter:
 
     def test_skeleton_created(self, vault_dir):
-        root = obsvault.ensure_skeleton()
+        root = vault_writer.ensure_skeleton()
         for sec in ("00-Dashboard", "01-Programs", "02-Techniques",
                     "03-Payloads", "05-Templates"):
             assert (root / sec).is_dir()
 
     def test_program_dir_sanitized(self, vault_dir):
-        pdir = obsvault.ensure_program_dir("Acme Corp / 2026!")
+        pdir = vault_writer.ensure_program_dir("Acme Corp / 2026!")
         assert pdir.is_dir()
         assert pdir.name == "acme-corp-2026"
 
     def test_write_note_atomic(self, vault_dir):
-        path = obsvault.write_note(
+        path = vault_writer.write_note(
             "01-Programs/test/example.md",
             "Title", "Body content.",
             frontmatter={"tags": ["a", "b"], "platform": "intigriti"},
@@ -345,11 +345,11 @@ class TestVaultWriter:
         assert "Body content." in content
 
     def test_overwrite_required(self, vault_dir):
-        obsvault.write_note("01-Programs/test/once.md", "T", "B")
+        vault_writer.write_note("01-Programs/test/once.md", "T", "B")
         with pytest.raises(FileExistsError):
-            obsvault.write_note("01-Programs/test/once.md", "T", "B")
+            vault_writer.write_note("01-Programs/test/once.md", "T", "B")
         # overwrite=True succeeds
-        obsvault.write_note("01-Programs/test/once.md", "T2", "B2", overwrite=True)
+        vault_writer.write_note("01-Programs/test/once.md", "T2", "B2", overwrite=True)
         content = (vault_dir / "01-Programs/test/once.md").read_text(encoding="utf-8")
         assert "# T2" in content
 
@@ -364,7 +364,7 @@ class TestVaultWriter:
                        "rationale": "wildcard", "signals": ["wildcard"]}],
             },
             reasoning="r", recommended_starting_tier=0,
-            opsec_notes="X-Intigriti-Username: grover",
+            opsec_notes="X-Intigriti-Username: researcher",
         )
         md = _render_plan_markdown(plan)
         assert "## Tier 0 (1 target)" in md

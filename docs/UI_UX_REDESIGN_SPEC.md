@@ -192,7 +192,7 @@ EVIDENCE
 
 REPORT
   Export
-  CyberBrain Sync
+  Vault Sync
 
 OPERATIONS
   Jobs
@@ -232,7 +232,7 @@ Persistent but minimizable.
 │ [12:04:22] target loaded: example.com                        │
 │ [12:05:11] command copied: subfinder passive enumeration     │
 │ [12:07:38] evidence note created: live-hosts.md              │
-│ [12:09:04] export complete: CyberBrain/BugBounty/example.com │
+│ [12:09:04] export complete: ResearchVault/BugBounty/example.com │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -262,7 +262,7 @@ Actions include:
 - Go to Active Recon
 - Go to XSS / CORS / LFI / SQLi / Auth / Takeover
 - Open Findings
-- Export to CyberBrain
+- Export to vault
 - Toggle guide mode
 - Toggle bottom console
 
@@ -293,7 +293,7 @@ Fields:
 - Out-of-scope entries
 - Allowed testing level
 - Workspace name
-- CyberBrain export path
+- Vault export path
 
 Risk mode selector:
 
@@ -325,7 +325,7 @@ Target:    example.com
 Scope:     Validated
 Mode:      Passive + Active
 Workspace: example.com
-Export:    CyberBrain/BugBounty/example.com
+Export:    ResearchVault/BugBounty/example.com
 ```
 
 ### 2. Command Forge
@@ -338,7 +338,7 @@ command cards.
 │ Phase: Passive Recon                          │
 │ Risk:  PASSIVE                                │
 │ Target: example.com                           │
-│ Output: /CyberBrain/BugBounty/example.com/    │
+│ Output: /ResearchVault/BugBounty/example.com/ │
 ├───────────────────────────────────────────────┤
 │ $ subfinder -d example.com -all -recursive    │
 │   > subdomains.txt                            │
@@ -401,12 +401,12 @@ Graph visualization can come later.
 12:22  Finding note exported
 ```
 
-### 7. CyberBrain Export Panel
+### 7. Vault Export Panel
 
 Vault structure:
 
 ```
-CyberBrain/
+ResearchVault/
 └── BugBounty/
     └── example.com/
         ├── 00_Target.md
@@ -536,7 +536,7 @@ Preserve authorized-testing framing without cluttering every action.
 
 - Findings board + finding cards.
 - Evidence timeline.
-- CyberBrain export panel.
+- Vault export panel.
 - Markdown export structure (00_Target.md … 06_Report_Draft.md +
   commands/, findings/, artifacts/).
 
@@ -559,7 +559,7 @@ Preserve authorized-testing framing without cluttering every action.
 - [ ] Attack Surface Map tree is present.
 - [ ] Recon Checklist is present.
 - [ ] Evidence Timeline is present.
-- [ ] CyberBrain Export panel is present.
+- [ ] Vault Export panel is present.
 - [ ] No mentor, influencer, course, or outside-company references in
   UI copy.
 - [ ] No real scanning / external execution added by this redesign.
@@ -585,7 +585,7 @@ Before merge:
 - [ ] Command Forge component implemented.
 - [ ] Bottom console implemented and minimizable.
 - [ ] Command palette implemented.
-- [ ] CyberBrain export UI represented.
+- [ ] Vault export UI represented.
 - [ ] UI copy reviewed for professional tone.
 - [ ] Responsive states checked.
 

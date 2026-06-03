@@ -1,8 +1,8 @@
 """
-Obsidian BugBountyVault writer.
+Markdown research vault writer.
 
-Resolves vault root from config[vault.path] (default ~/Documents/BugBountyVault),
-creates the CLAUDE.md folder structure (00-Dashboard / 01-Programs/<name>/ /
+Resolves vault root from config[vault.path] (default ~/Documents/ResearchVault),
+creates the notes folder structure (00-Dashboard / 01-Programs/<name>/ /
 02-Techniques / 03-Payloads / 05-Templates), writes notes with YAML
 frontmatter atomically (tmp + rename).
 
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-DEFAULT_VAULT = "~/Documents/BugBountyVault"
+DEFAULT_VAULT = "~/Documents/ResearchVault"
 SECTIONS = ("00-Dashboard", "01-Programs", "02-Techniques", "03-Payloads", "05-Templates")
 
 
@@ -36,7 +36,7 @@ def vault_root() -> Path:
 
 
 def ensure_skeleton() -> Path:
-    """Create the top-level BugBountyVault structure if missing."""
+    """Create the top-level research vault structure if missing."""
     root = vault_root()
     root.mkdir(parents=True, exist_ok=True)
     for sec in SECTIONS:
@@ -136,7 +136,7 @@ def write_note(
     """Atomic write of a markdown note under vault_root().
 
     ``relative_path`` is from the vault root, e.g.
-    ``"01-Programs/rivian/strategist_plan.md"``.
+    ``"01-Programs/examplecorp/strategist_plan.md"``.
 
     Raises FileExistsError when the target exists and overwrite=False.
     """

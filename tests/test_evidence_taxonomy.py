@@ -161,20 +161,20 @@ class TestVerify:
 
     def test_promote_ai_hypothesis(self, db, finding):
         eid = E.record_evidence(db, finding, "guess", "x", "ai_hypothesis")
-        updated = E.verify_evidence(db, eid, "grover")
+        updated = E.verify_evidence(db, eid, "researcher")
         assert updated.source == "verified"
-        assert updated.verified_by == "grover"
+        assert updated.verified_by == "researcher"
         assert updated.verified_at  # set
 
     def test_observed_is_immutable(self, db, finding):
         eid = E.record_evidence(db, finding, "k", "v", "observed")
         with pytest.raises(E.EvidenceImmutable):
-            E.verify_evidence(db, eid, "grover")
+            E.verify_evidence(db, eid, "researcher")
 
     def test_inferred_is_immutable(self, db, finding):
         eid = E.record_evidence(db, finding, "k", "v", "inferred")
         with pytest.raises(E.EvidenceImmutable):
-            E.verify_evidence(db, eid, "grover")
+            E.verify_evidence(db, eid, "researcher")
 
     def test_verified_is_idempotent(self, db, finding):
         eid = E.record_evidence(db, finding, "k", "v", "ai_hypothesis")
@@ -287,7 +287,7 @@ class TestEvidenceRoutes:
 
     def test_verify_route_ok(self, db, finding):
         eid = E.record_evidence(db, finding, "x", "y", "ai_hypothesis")
-        out = routes.finding_evidence_verify(db, finding, eid, "grover")
+        out = routes.finding_evidence_verify(db, finding, eid, "researcher")
         assert out["ok"] is True
         assert out["evidence"]["source"] == "verified"
 
@@ -303,13 +303,13 @@ class TestEvidenceRoutes:
             "SELECT id FROM findings WHERE bug_id='BUG-002'"
         ).fetchone()[0]
         eid = E.record_evidence(db, fid2, "x", "y", "ai_hypothesis")
-        out = routes.finding_evidence_verify(db, finding, eid, "grover")
+        out = routes.finding_evidence_verify(db, finding, eid, "researcher")
         assert out["ok"] is False
         assert "does not belong" in out["error"]
 
     def test_verify_route_immutable(self, db, finding):
         eid = E.record_evidence(db, finding, "x", "y", "observed")
-        out = routes.finding_evidence_verify(db, finding, eid, "grover")
+        out = routes.finding_evidence_verify(db, finding, eid, "researcher")
         assert out["ok"] is False
 
 
@@ -356,7 +356,7 @@ class TestDispatchPhase14:
         eid = E.record_evidence(db, finding, "k", "v", "ai_hypothesis")
         status, body = server.dispatch(
             "POST", f"/api/v2/findings/{finding}/evidence/{eid}/verify", {},
-            {"operator": "grover"}, db,
+            {"operator": "researcher"}, db,
         )
         assert status == 200
         assert body["ok"] is True
@@ -365,7 +365,7 @@ class TestDispatchPhase14:
         eid = E.record_evidence(db, finding, "k", "v", "observed")
         status, body = server.dispatch(
             "POST", f"/api/v2/findings/{finding}/evidence/{eid}/verify", {},
-            {"operator": "grover"}, db,
+            {"operator": "researcher"}, db,
         )
         assert status == 409
 

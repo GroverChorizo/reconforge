@@ -14,10 +14,10 @@
 set -euo pipefail
 
 VERSION="${RECONFORGE_VERSION:-latest}"
-IMAGE="ghcr.io/grover-bb/reconforge:${VERSION}"
+IMAGE="ghcr.io/example-org/reconforge:${VERSION}"
 PREFIX="${PREFIX:-/usr/local}"
 CFG_DIR="${HOME}/.config/reconforge"
-VAULT_DIR_DEFAULT="${HOME}/Documents/BugBountyVault"
+VAULT_DIR_DEFAULT="${HOME}/Documents/ResearchVault"
 
 AUTO_DEPS=0
 DRY_RUN=0

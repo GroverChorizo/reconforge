@@ -83,7 +83,7 @@ If `bounty_ranges` is missing, use 0.
 ## OPSEC NOTES — ALWAYS INCLUDE
 
 - Intigriti: `All requests MUST include X-Intigriti-Username: <handle>`
-- HackerOne: `Identifiable User-Agent required (grover-bb-research)`
+- HackerOne: `Identifiable User-Agent required (researcher-bb-research)`
 - Bugcrowd: `Out-of-scope submissions carry -1 penalty — Scope Guard already enforces`
 - Universal: `Default stealth mode: 2 req/s, 10 threads, T2 timing. Aggressive mode requires explicit operator approval.`
 

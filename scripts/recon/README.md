@@ -53,7 +53,7 @@ Defaults are set in `_lib.sh`; override per-run via env or
 |---|---|---|
 | `TARGET` | (required) | Root domain in scope |
 | `SCOPE_FILE` | unset | Path to ReconForge scope JSON; if unset, scope check is logged-only |
-| `RECONFORGE_OUTPUT_DIR` | `~/Documents/CyberBrain/03-Research/Recon` | Run root |
+| `RECONFORGE_OUTPUT_DIR` | `~/Documents/ResearchVault/03-Research/Recon` | Run root |
 | `DATESTAMP` | `YYYY-MM-DD-HHMM` | Per-run dir name (override for reruns) |
 | `THREADS` | `10` | Tool-wide thread cap |
 | `RATE_LIMIT_RPS` | `50` | Tool-wide req/s cap (matches ReconForge default) |
@@ -94,7 +94,7 @@ SKIP_PHASES="00,01" ./master-pipeline.sh
 - **Rate limit**: `RATE_LIMIT_RPS=50` and `THREADS=10` are conservative.
   Bump only after reading the program's policy URL.
 - **User-Agent**: Most tools accept a UA; for Intigriti targets, also set
-  `X-Intigriti-Username: grover` upstream (see ReconForge scope_guard).
+  `X-Intigriti-Username: researcher-handle` upstream (see ReconForge scope_guard).
 - **OOB callbacks** via the public `oast.pro` server are increasingly
   blocklisted; self-host `interactsh-server` on your own VPS via
   `scripts/c2/interactsh-server-deploy.sh`.

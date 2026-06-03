@@ -1,7 +1,7 @@
 {
   "name": "minimal-test",
   "platform": "hackerone",
-  "platform_handle": "grover",
+  "platform_handle": "researcher",
   "in_scope": [
     {"type": "domain", "value": "example.com"}
   ],

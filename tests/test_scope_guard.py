@@ -4,7 +4,7 @@ Tests for scope_guard.py — pure-logic scope validation.
 Per CLAUDE.md doctrine:
   - Wildcard scope (*.example.com) does NOT include example.com itself.
   - Out-of-scope entries ALWAYS win, even if matched by an in-scope rule.
-  - Platform header injection is non-negotiable (X-Intigriti-Username: grover etc.).
+  - Platform header injection is non-negotiable (X-Intigriti-Username: researcher etc.).
 """
 import json
 import os
@@ -26,7 +26,7 @@ def basic_program():
     return {
         "name": "basic",
         "platform": "intigriti",
-        "platform_handle": "grover",
+        "platform_handle": "researcher",
         "in_scope": [
             {"type": "domain",   "value": "example.com",     "tier": 1},
             {"type": "wildcard", "value": "*.example.com",   "tier": 2},
@@ -44,7 +44,7 @@ def mobile_program():
     return {
         "name": "mobile",
         "platform": "hackerone",
-        "platform_handle": "grover",
+        "platform_handle": "researcher",
         "in_scope": [
             {"type": "mobile_ios",     "value": "com.example.app"},
             {"type": "mobile_android", "value": "com.example.app"},
@@ -59,7 +59,7 @@ def ipv6_program():
     return {
         "name": "v6",
         "platform": "synack",
-        "platform_handle": "grover",
+        "platform_handle": "researcher",
         "in_scope": [
             {"type": "cidr", "value": "2001:db8::/32"},
         ],
@@ -108,7 +108,7 @@ class TestWildcardSemantics:
     def test_wildcard_alone_excludes_apex(self):
         # apex NOT explicitly listed → wildcard rule alone must NOT match it
         prog = {
-            "platform": "intigriti", "platform_handle": "grover",
+            "platform": "intigriti", "platform_handle": "researcher",
             "in_scope":    [{"type": "wildcard", "value": "*.solo.com"}],
             "out_of_scope": [],
         }
@@ -141,7 +141,7 @@ class TestOutOfScopePrecedence:
 
     def test_oos_apex_with_in_scope_wildcard(self):
         prog = {
-            "platform": "intigriti", "platform_handle": "grover",
+            "platform": "intigriti", "platform_handle": "researcher",
             "in_scope":    [{"type": "wildcard", "value": "*.foo.com"}],
             "out_of_scope": [{"type": "domain",  "value": "blocked.foo.com"}],
         }
@@ -225,25 +225,25 @@ class TestPlatformHeaders:
 
     def test_intigriti_header(self, basic_program):
         r = SG.check("example.com", basic_program)
-        assert r["headers"].get("X-Intigriti-Username") == "grover"
+        assert r["headers"].get("X-Intigriti-Username") == "researcher"
 
     def test_hackerone_user_agent(self, mobile_program):
         r = SG.check("com.example.app", mobile_program)
         ua = r["headers"].get("User-Agent", "")
-        assert "grover-bb-research" in ua
-        assert "hackerone.com/grover" in ua
+        assert "researcher-bb-research" in ua
+        assert "hackerone.com/researcher" in ua
 
     def test_bugcrowd_header(self):
-        prog = {"platform": "bugcrowd", "platform_handle": "grover",
+        prog = {"platform": "bugcrowd", "platform_handle": "researcher",
                 "in_scope": [{"type": "domain", "value": "bc.com"}], "out_of_scope": []}
         r = SG.check("bc.com", prog)
-        assert r["headers"].get("X-Bugcrowd-Username") == "grover"
+        assert r["headers"].get("X-Bugcrowd-Username") == "researcher"
 
     def test_yeswehack_header(self):
-        prog = {"platform": "yeswehack", "platform_handle": "grover",
+        prog = {"platform": "yeswehack", "platform_handle": "researcher",
                 "in_scope": [{"type": "domain", "value": "y.com"}], "out_of_scope": []}
         r = SG.check("y.com", prog)
-        assert r["headers"].get("X-YesWeHack-Username") == "grover"
+        assert r["headers"].get("X-YesWeHack-Username") == "researcher"
 
     def test_no_handle_no_headers(self):
         prog = {"platform": "intigriti", "in_scope": [{"type": "domain", "value": "x.com"}]}
@@ -281,23 +281,23 @@ class TestExampleScopeFiles:
         prog = SG.load_program(path)
         assert prog["platform"] == "intigriti"
 
-    def test_rivian_apex_allowed(self):
-        prog = SG.load_program(Path(__file__).parent.parent / "scopes" / "rivian.json")
-        assert SG.check("rivian.com", prog)["allowed"] is True
+    def test_examplecorp_apex_allowed(self):
+        prog = SG.load_program(Path(__file__).parent.parent / "scopes" / "examplecorp.json")
+        assert SG.check("examplecorp.com", prog)["allowed"] is True
 
-    def test_rivian_subdomain_allowed(self):
-        prog = SG.load_program(Path(__file__).parent.parent / "scopes" / "rivian.json")
-        assert SG.check("api.rivian.com", prog)["allowed"] is True
+    def test_examplecorp_subdomain_allowed(self):
+        prog = SG.load_program(Path(__file__).parent.parent / "scopes" / "examplecorp.json")
+        assert SG.check("api.examplecorp.com", prog)["allowed"] is True
 
-    def test_rivian_careers_blocked(self):
-        prog = SG.load_program(Path(__file__).parent.parent / "scopes" / "rivian.json")
-        r = SG.check("careers.rivian.com", prog)
+    def test_examplecorp_careers_blocked(self):
+        prog = SG.load_program(Path(__file__).parent.parent / "scopes" / "examplecorp.json")
+        r = SG.check("careers.examplecorp.com", prog)
         assert r["allowed"] is False
         assert "out_of_scope" in r["reason"]
 
-    def test_rivian_view_e_blocked(self):
-        prog = SG.load_program(Path(__file__).parent.parent / "scopes" / "rivian.json")
-        assert SG.check("view.e.rivian.com", prog)["allowed"] is False
+    def test_examplecorp_view_e_blocked(self):
+        prog = SG.load_program(Path(__file__).parent.parent / "scopes" / "examplecorp.json")
+        assert SG.check("view.e.examplecorp.com", prog)["allowed"] is False
 
 
 # ═══════════════════════════════════════════════════════════
@@ -335,26 +335,26 @@ class TestSubmitDomainIntegration:
         assert len(jobs) == 1
 
     def test_in_scope_domain_passes(self, isolated_db):
-        M.set_config("active_program", "scopes/rivian.json")
-        jobs = M.submit_domain("api.rivian.com", "admin")
+        M.set_config("active_program", "scopes/examplecorp.json")
+        jobs = M.submit_domain("api.examplecorp.com", "admin")
         assert len(jobs) == 1
-        assert jobs[0].domain == "api.rivian.com"
+        assert jobs[0].domain == "api.examplecorp.com"
 
     def test_out_of_scope_domain_rejected_no_job(self, isolated_db):
-        M.set_config("active_program", "scopes/rivian.json")
-        jobs = M.submit_domain("careers.rivian.com", "admin")
+        M.set_config("active_program", "scopes/examplecorp.json")
+        jobs = M.submit_domain("careers.examplecorp.com", "admin")
         assert jobs == []
 
     def test_rejection_writes_history(self, isolated_db):
-        M.set_config("active_program", "scopes/rivian.json")
-        M.submit_domain("careers.rivian.com", "admin")
+        M.set_config("active_program", "scopes/examplecorp.json")
+        M.submit_domain("careers.examplecorp.com", "admin")
         rows = M.db_rows(
-            "SELECT * FROM history WHERE domain='careers.rivian.com' AND source='scope_guard'"
+            "SELECT * FROM history WHERE domain='careers.examplecorp.com' AND source='scope_guard'"
         )
         assert len(rows) == 1
         assert "REJECTED" in rows[0]["text"]
 
     def test_unrelated_domain_rejected(self, isolated_db):
-        M.set_config("active_program", "scopes/rivian.json")
+        M.set_config("active_program", "scopes/examplecorp.json")
         jobs = M.submit_domain("attacker.com", "admin")
         assert jobs == []

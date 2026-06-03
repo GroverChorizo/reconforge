@@ -7,7 +7,7 @@ Final gate before declaring ReconForge v1 ready. Requires a real Parrot OS VM (6
 1. **Fresh Parrot 6.x VM.** No prior ReconForge install.
 2. **OWASP Juice Shop** running locally on `localhost:3000` for safe target practice:
    ```bash
-   docker run --rm -d --name juiceshop -p 3000:3000 bkimminich/juice-shop
+   docker run --rm -d --name local-lab -p 3000:3000 example/vulnerable-lab
    ```
 3. Confirm Docker works and the user has `docker` group membership (`groups | grep docker`). If not: `sudo usermod -aG docker $USER && newgrp docker`.
 
@@ -15,7 +15,7 @@ Final gate before declaring ReconForge v1 ready. Requires a real Parrot OS VM (6
 
 ```bash
 # 1. Install (use the artifact URL from the v0.1.0 release; pin works)
-curl -sSL https://github.com/grover-bb/reconforge/releases/download/v0.1.0/install.sh | bash --auto-deps
+curl -sSL https://github.com/example-org/reconforge/releases/download/v0.1.0/install.sh | bash --auto-deps
 
 # 2. First-run wizard
 reconforge wizard
@@ -24,8 +24,8 @@ reconforge wizard
 #   - LLM Setup:
 #       Option A (CI key available): paste Claude API key
 #       Option B (no key): pick "Ollama (local)", default URL, defaults for substitutes
-#   - Scope Paste: paste the Juice Shop scope JSON from tests/e2e/scope_juiceshop.json
-#   - Vault Pick: default ~/Documents/BugBountyVault
+#   - Scope Paste: paste the local lab scope JSON from tests/e2e/scope_local_lab.json
+#   - Vault Pick: default ~/Documents/ResearchVault
 
 # 3. Start service
 reconforge start
@@ -47,8 +47,8 @@ bash tests/e2e/run_smoke.sh
 
 It checks each item in `tests/e2e/expected_artifacts.json` and prints a PASS / FAIL summary. Specifically:
 
-1. `BugBountyVault/01-Programs/juiceshop/strategist_plan.md` exists, non-empty.
-2. At least one `BUG-juiceshop-001.md` (or higher) under that folder.
+1. `ResearchVault/01-Programs/local-lab/strategist_plan.md` exists, non-empty.
+2. At least one `BUG-local-lab-001.md` (or higher) under that folder.
 3. `findings` table has ≥1 row with `cvss_score IS NOT NULL AND cvss_score > 0`.
 4. `attack_techniques` table covers ≥3 distinct tactics.
 5. `submission_drafts` table has ≥1 row per platform listed in the scope (Juice Shop scope = `hackerone` + `bugcrowd`; so ≥2 drafts per finding).

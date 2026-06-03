@@ -4,7 +4,7 @@ Strategist agent — Opus 4.7.
 Input:  scope JSON (validated by ScopeGuard upstream)
 Output: Tier 0–4 ranked attack plan, persisted to:
           - agent_memory[(job_id, strategist, "plan_v1")]
-          - BugBountyVault/01-Programs/<program>/strategist_plan.md
+          - ResearchVault/01-Programs/<program>/strategist_plan.md
         Emits SSE event 'strategist.plan_ready'.
 
 Coverage check: every in_scope entry MUST appear in some tier. Plans that
@@ -172,7 +172,7 @@ def _parse_plan_json(content: str) -> Optional[Dict]:
 
 
 def _write_vault_plan(program: Dict, plan: StrategistPlan) -> Path:
-    from obsidian.vault import ensure_program_dir, vault_root, write_note
+    from vault.writer import ensure_program_dir, vault_root, write_note
 
     program_name = program.get("name", "unknown")
     pdir = ensure_program_dir(program_name)

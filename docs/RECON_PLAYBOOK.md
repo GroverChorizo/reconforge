@@ -644,11 +644,11 @@ scope check + tool availability + structured logs prepended.
   defaults match conservative bug-bounty norms. Bump only after
   reading the program's policy URL.
 - **Identifying headers**: Intigriti requires
-  `X-Intigriti-Username: grover` on every request to in-scope assets.
+  `X-Intigriti-Username: researcher-handle` on every request to in-scope assets.
   ReconForge's scope_guard injects this automatically when the program
   is registered.
 - **User-Agent**: bug-bounty programs increasingly require an
-  identifiable UA. The Dockerfile sets `grover-bb-research` as the
+  identifiable UA. Use a generic handle such as `researcher-bb-research` as the
   default for the Go-based tools; tune per program.
 - **Source IP**: rotate VPS IPs between programs. The same IP hitting
   ten different bug-bounty targets in a day looks like an attacker,

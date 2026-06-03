@@ -121,7 +121,7 @@ the result in `tests/e2e/smoke_history.md` with the v0.2.0 tag.
 - [ ] Tail the access log for the test target — confirm rate-limit
       adherence matches the preflight envelope (5 req/s for the test
       program's hint).
-- [ ] Confirm Intigriti header `X-Intigriti-Username: grover` was sent
+- [ ] Confirm Intigriti header `X-Intigriti-Username: researcher-handle` was sent
       on every request (check Burp / proxy capture).
 - [ ] Run `pgrep -af nuclei` while idle — no orphan scanner processes.
 
@@ -139,4 +139,4 @@ the result in `tests/e2e/smoke_history.md` with the v0.2.0 tag.
 - HAR/Burp import not yet present (Phase 22).
 - Mass-assignment / JS-XSS playbooks methodology-brief — Phase 22-23.
 - Metasploit integration disabled by default; opt-in mode in Phase 24.
-- Obsidian export still per-finding only; per-program tree in Phase 25.
+- Vault export still per-finding only; per-program tree in Phase 25.

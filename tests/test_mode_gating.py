@@ -50,7 +50,7 @@ def acme(db):
         db,
         name="ACME Program",
         platform="intigriti",
-        platform_handle="grover",
+        platform_handle="researcher",
         scope=[{
             "type": "wildcard", "value": "*.acme.com", "tier": 2,
             "allowed_methods": ["GET", "POST"],

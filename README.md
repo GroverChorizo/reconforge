@@ -24,7 +24,7 @@ internal security work where you have explicit permission to test.
 - Passive, active, URL, JavaScript, parameter, vuln-triage, evidence, and report
   workflow cards.
 - Continuous monitoring with adaptive cadence for enrolled targets.
-- CyberBrain/Obsidian-friendly contract output and vault note paths.
+- Notes-vault-friendly contract output and report archive paths.
 
 ## Requirements
 
@@ -41,14 +41,14 @@ Optional but useful:
 - GitHub token for `github-subdomains` and richer passive recon.
 - ProjectDiscovery `notify` config for monitor alerts.
 - Claude API or Ollama if you want agent-assisted analysis and reports.
-- An Obsidian vault, CyberBrain vault, or any directory for exported notes.
+- A markdown notes vault or any directory for exported notes.
 
 ## Install
 
 ### Local Python
 
 ```bash
-git clone https://github.com/grover-bb/reconforge.git
+git clone https://github.com/example-org/reconforge.git
 cd reconforge
 python3 -m venv .venv
 source .venv/bin/activate
@@ -59,7 +59,7 @@ python main.py
 On Windows PowerShell:
 
 ```powershell
-git clone https://github.com/grover-bb/reconforge.git
+git clone https://github.com/example-org/reconforge.git
 cd reconforge
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -232,13 +232,13 @@ up to 7 days. New assets reset the cadence and can trigger `notify` if enabled.
 Monitor scans are intended for passive enum plus light HTTP probing. Loud vuln
 triage remains a deliberate operator action.
 
-## Vault And CyberBrain Configuration
+## Vault Configuration
 
 ReconForge has two vault-related paths:
 
 | Setting | Meaning |
 | --- | --- |
-| `cyberbrain_vault_path` | Your notes vault root, usually set in the wizard |
+| Vault root | Your notes vault root, usually set in the wizard or UI |
 | `reconforge_output_dir` | Contract output directory, defaults to `./out/` |
 
 Set or update them in `Operations -> Settings`, or edit:
@@ -251,7 +251,7 @@ Typical settings:
 
 ```json
 {
-  "cyberbrain_vault_path": "C:/Users/you/Documents/CyberBrain",
+  "vault_path": "C:/Users/you/Documents/ResearchVault",
   "reconforge_output_dir": "./out",
   "auto_emit_contract": true,
   "auto_ingest_vault": true,
@@ -271,8 +271,8 @@ out/<program-slug>/<YYYY-MM-DD-HHmm>/
 └── screenshots/
 ```
 
-Use this output as the handoff point for CyberBrain, Obsidian notes, evidence
-review, or downstream reporting workflows.
+Use this output as the handoff point for your notes vault, evidence review, or
+downstream reporting workflows.
 
 ## Where Data Lives
 

@@ -6,7 +6,7 @@
 
 set -o pipefail
 
-: "${RECONFORGE_OUTPUT_DIR:=$HOME/Documents/CyberBrain/03-Research/Recon}"
+: "${RECONFORGE_OUTPUT_DIR:=$HOME/Documents/ResearchVault/03-Research/Recon}"
 : "${THREADS:=10}"
 : "${RATE_LIMIT_RPS:=50}"
 : "${DATESTAMP:=$(date +%Y-%m-%d-%H%M)}"

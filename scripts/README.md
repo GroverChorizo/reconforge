@@ -66,7 +66,7 @@ Set up continuous monitoring for the long tail:
 |---|---|---|
 | `TARGET` | (required) | all |
 | `SCOPE_FILE` | unset | recon, vuln, chain, c2 (refuse) |
-| `RECONFORGE_OUTPUT_DIR` | `~/Documents/CyberBrain/03-Research/Recon` | all |
+| `RECONFORGE_OUTPUT_DIR` | `~/Documents/ResearchVault/03-Research/Recon` | all |
 | `DATESTAMP` | auto | per-run dir name |
 | `THREADS` | `10` | most tool wrappers |
 | `RATE_LIMIT_RPS` | `50` | nuclei, naabu, httpx |
@@ -100,8 +100,8 @@ whole run.
 
 - **GUI** — every script is bash. The ReconForge web UI exposes the
   same tools via the registry; these scripts are the CLI mirror.
-- **Per-engagement playbooks** — those live in the CyberBrain vault
-  under `05-Playbooks/`.
+- **Per-engagement playbooks** — those live in your notes vault under
+  `05-Playbooks/`.
 - **Tool wordlists** — pulled via the Dockerfile (SecLists + gf-patterns).
 - **Custom payloads** — payload libraries belong in the vault, not the
   repo. Reference them from scripts via `WORDLIST_DIR`.

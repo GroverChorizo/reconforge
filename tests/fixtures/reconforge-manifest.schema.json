@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cyberbrain.local/schemas/reconforge-manifest.json",
+  "$id": "https://vault.local/schemas/reconforge-manifest.json",
   "title": "reconforge run manifest",
   "type": "object",
   "required": ["schema_version", "run_id", "program", "started_at", "tools", "counts"],

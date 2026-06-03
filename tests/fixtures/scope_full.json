@@ -1,7 +1,7 @@
 {
   "name": "full-test",
   "platform": "intigriti",
-  "platform_handle": "grover",
+  "platform_handle": "researcher",
   "policy_url": "https://example.invalid/policy",
   "in_scope": [
     {"type": "domain",         "value": "acme.com",            "tier": 1},

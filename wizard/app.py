@@ -11,7 +11,7 @@ Seven screens:
   4. API Keys — GitHub token, Interactsh server, etc.
   5. LLM Setup — Claude API key OR Ollama URL
   6. Scope Paste — paste program scope JSON (optional)
-  7. Vault Pick — choose ~/Documents/BugBountyVault directory
+  7. Vault Pick — choose ~/Documents/ResearchVault directory
 
 Settings are written to ``~/.config/reconforge/settings.json`` with a
 ``setup_complete: true`` marker. Nothing about identities or keys is
@@ -182,7 +182,7 @@ def run_text_wizard(out=sys.stdout, in_=sys.stdin) -> int:
 
     # ── [7/7] Vault Pick ─────────────────────────────────────────
     _say("\n[7/7] Vault Pick\n")
-    default_vault = str(Path.home() / "Documents" / "BugBountyVault")
+    default_vault = str(Path.home() / "Documents" / "ResearchVault")
     vault = _ask("Vault directory", default=default_vault)
 
     # ── persist ──────────────────────────────────────────────────

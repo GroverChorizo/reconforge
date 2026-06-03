@@ -11,7 +11,7 @@
 
 set -o pipefail
 
-: "${RECONFORGE_OUTPUT_DIR:=$HOME/Documents/CyberBrain/03-Research/Recon}"
+: "${RECONFORGE_OUTPUT_DIR:=$HOME/Documents/ResearchVault/03-Research/Recon}"
 : "${DATESTAMP:=$(date +%Y-%m-%d-%H%M)}"
 
 [ -z "${TARGET:-}" ]   && { echo "TARGET required";   exit 2; }
@@ -122,7 +122,7 @@ integrity, or availability obligations to their customer.]
 console output if applicable.]
 
 ---
-*X-Intigriti-Username: grover  |  Platform: Intigriti*
+*X-Intigriti-Username: researcher  |  Platform: Intigriti*
 EOF
         ;;
 
@@ -161,7 +161,7 @@ priority levels.
 [Fix recommendation]
 
 ---
-*Bugcrowd researcher handle: grover*
+*Bugcrowd researcher handle: researcher*
 EOF
         ;;
 
@@ -203,7 +203,7 @@ Frame in terms of customer trust, regulatory exposure, financial loss.]
 testing source is compliant.]
 
 ---
-*YesWeHack handle: grover*
+*YesWeHack handle: researcher*
 EOF
         ;;
 
@@ -248,7 +248,7 @@ sequential screenshots (must be numbered to match reproduction steps):
 [Fix recommendation]
 
 ---
-*Synack Red Team member: grover  |  Invitation verified*
+*Synack Red Team member: researcher  |  Invitation verified*
 EOF
         ;;
 

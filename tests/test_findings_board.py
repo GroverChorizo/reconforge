@@ -27,7 +27,7 @@ def db(tmp_path):
 @pytest.fixture
 def acme(db):
     return P.create_program(
-        db, name="ACME", platform="intigriti", platform_handle="grover",
+        db, name="ACME", platform="intigriti", platform_handle="researcher",
         scope=[{"type": "wildcard", "value": "*.acme.com", "tier": 2}],
     )
 
@@ -76,7 +76,7 @@ class TestStatus:
         fid = seeded.execute(
             "SELECT id FROM findings WHERE bug_id='BUG-001'"
         ).fetchone()[0]
-        out = F.set_status(seeded, fid, "needs_review", operator="grover")
+        out = F.set_status(seeded, fid, "needs_review", operator="researcher")
         assert out["to"] == "needs_review"
         assert out["from"] == "new"
         assert out["is_forward"] is True
@@ -213,7 +213,7 @@ class TestDispatch:
         fid = seeded.execute("SELECT id FROM findings WHERE bug_id='BUG-001'").fetchone()[0]
         status, body = server.dispatch(
             "POST", f"/api/v2/findings/{fid}/status", {},
-            {"status": "needs_review", "operator": "grover"}, seeded,
+            {"status": "needs_review", "operator": "researcher"}, seeded,
         )
         assert status == 200
         assert body["ok"] is True

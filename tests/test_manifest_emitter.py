@@ -1,6 +1,6 @@
 """Tests for core.manifest_emitter — the vault contract emitter.
 
-Schema source of truth is the CyberBrain vault. A pinned copy is vendored
+Schema source of truth is the external notes vault. A pinned copy is vendored
 at tests/fixtures/reconforge-manifest.schema.json — keep it in sync when
 the vault bumps schema_version.
 """
@@ -46,21 +46,21 @@ def output_root(tmp_path, monkeypatch):
 @pytest.fixture
 def basic_ctx_result(migrated_db):
     program = {
-        "slug": "rivian",
+        "slug": "examplecorp",
         "name": "Rivian",
-        "in_scope": [{"type": "domain", "value": "rivian.com"},
-                     {"type": "wildcard", "value": "*.rivian.com"}],
-        "out_of_scope": [{"type": "domain", "value": "careers.rivian.com"}],
+        "in_scope": [{"type": "domain", "value": "examplecorp.com"},
+                     {"type": "wildcard", "value": "*.examplecorp.com"}],
+        "out_of_scope": [{"type": "domain", "value": "careers.examplecorp.com"}],
     }
     ctx = SimpleNamespace(
         job_id="J-TEST-1",
         program=program,
-        inputs={"domain": "rivian.com", "mode": "passive_recon"},
+        inputs={"domain": "examplecorp.com", "mode": "passive_recon"},
         db=migrated_db,
     )
     result = SimpleNamespace(
         job_id="J-TEST-1",
-        domain="rivian.com",
+        domain="examplecorp.com",
         status="completed",
         started_at="2026-05-24T01:00:00-05:00",
         completed_at="2026-05-24T01:05:00-05:00",
@@ -148,12 +148,12 @@ class TestEmitRun:
         manifest = json.loads((run_dir / "_manifest.json").read_text(encoding="utf-8"))
         assert manifest["schema_version"] == SCHEMA_VERSION
         assert manifest["run_id"] == "rf-J-TEST-1"
-        assert manifest["program"] == "rivian"
+        assert manifest["program"] == "examplecorp"
         assert manifest["started_at"] == "2026-05-24T01:00:00-05:00"
         assert manifest["completed_at"] == "2026-05-24T01:05:00-05:00"
-        assert "rivian.com" in manifest["scope"]["in_scope"]
-        assert "*.rivian.com" in manifest["scope"]["in_scope"]
-        assert "careers.rivian.com" in manifest["scope"]["out_of_scope"]
+        assert "examplecorp.com" in manifest["scope"]["in_scope"]
+        assert "*.examplecorp.com" in manifest["scope"]["in_scope"]
+        assert "careers.examplecorp.com" in manifest["scope"]["out_of_scope"]
         assert manifest["counts"] == {"hosts": 0, "endpoints": 0, "findings": 0}
         names = [t["name"] for t in manifest["tools"]]
         assert "agent.scope_guard" in names
@@ -166,7 +166,7 @@ class TestEmitRun:
             "INSERT INTO subdomains (domain, subdomain, http_status, http_title, "
             "http_technologies, ip_addresses, created_at) "
             "VALUES (?,?,?,?,?,?,?)",
-            ("rivian.com", "api.rivian.com", 200, "Rivian API",
+            ("examplecorp.com", "api.examplecorp.com", 200, "ExampleCorp API",
              json.dumps(["nginx", "react"]), json.dumps(["52.84.12.4"]),
              "2026-05-24 01:01:00"),
         )
@@ -174,7 +174,7 @@ class TestEmitRun:
             "INSERT INTO subdomains (domain, subdomain, http_status, http_title, "
             "http_technologies, ip_addresses, created_at) "
             "VALUES (?,?,?,?,?,?,?)",
-            ("rivian.com", "basecamp.rivian.com", 200, "Basecamp",
+            ("examplecorp.com", "portal.examplecorp.com", 200, "Portal",
              json.dumps(["cloudfront"]), json.dumps([]),
              "2026-05-24 01:02:00"),
         )
@@ -183,7 +183,7 @@ class TestEmitRun:
         hosts = [json.loads(l) for l in
                  (run_dir / "hosts.jsonl").read_text(encoding="utf-8").splitlines() if l]
         assert len(hosts) == 2
-        api = next(h for h in hosts if h["host"] == "api.rivian.com")
+        api = next(h for h in hosts if h["host"] == "api.examplecorp.com")
         assert api["status_code"] == 200
         assert "react" in api["tech"]
         assert api["ip"] == ["52.84.12.4"]
@@ -202,9 +202,9 @@ class TestEmitRun:
             "description, evidence_json, confidence, cvss_score, cvss_vector, "
             "bounty_estimate_usd, status, created_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("RF-001", "J-TEST-1", "api.rivian.com", "idor",
+            ("RF-001", "J-TEST-1", "api.examplecorp.com", "idor",
              "IDOR in /orders/{id}", "Sequential numeric IDs unprotected.",
-             json.dumps({"url": "https://api.rivian.com/orders/1234", "tool": "manual"}),
+             json.dumps({"url": "https://api.examplecorp.com/orders/1234", "tool": "manual"}),
              0.92, 8.5, "AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
              3500, "confirmed", "2026-05-24 01:04:00"),
         )
@@ -217,8 +217,8 @@ class TestEmitRun:
         assert f["id"] == "RF-001"
         assert f["severity"] == "high"
         assert f["category"] == "idor"
-        assert f["host"] == "api.rivian.com"
-        assert f["url"] == "https://api.rivian.com/orders/1234"
+        assert f["host"] == "api.examplecorp.com"
+        assert f["url"] == "https://api.examplecorp.com/orders/1234"
         assert f["false_positive_likelihood"] == "low"
         assert f["_rf"]["status"] == "confirmed"
         manifest = json.loads((run_dir / "_manifest.json").read_text(encoding="utf-8"))
@@ -233,7 +233,7 @@ class TestEmitRun:
             "INSERT INTO findings (bug_id, job_id, domain, vuln_class, title, "
             "evidence_json, confidence, status, created_at) "
             "VALUES (?,?,?,?,?,?,?,?,?)",
-            ("RF-002", "J-TEST-1", "rivian.com", "ssrf", "SSRF in /webhook",
+            ("RF-002", "J-TEST-1", "examplecorp.com", "ssrf", "SSRF in /webhook",
              json.dumps({}), 0.7, "needs_review", "2026-05-24 01:06:00"),
         )
         migrated_db.commit()

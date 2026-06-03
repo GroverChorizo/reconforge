@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT))
 from agents.base import AgentContext, AgentResult, BaseAgent
 from core.pipeline import run_agentic_pipeline, PipelineResult
 from db.migrations import runner as MIG
-from obsidian import vault as obsvault
+from vault import writer as vault_writer
 from tools import registry as toolreg
 
 
@@ -45,7 +45,7 @@ def migrated_db(tmp_path):
 @pytest.fixture
 def vault_dir(tmp_path, monkeypatch):
     vroot = tmp_path / "Vault"
-    monkeypatch.setattr(obsvault, "vault_root", lambda: vroot)
+    monkeypatch.setattr(vault_writer, "vault_root", lambda: vroot)
     return vroot
 
 

@@ -1,5 +1,5 @@
 """Tests for the recon-monitor scheduler: the quiet-band cadence ladder, the
-new-asset delta, the reschedule math, and the CyberBrain post-complete hook.
+new-asset delta, the reschedule math, and the vault post-complete hook.
 
 Run: pytest tests/test_schedule.py -v
 """

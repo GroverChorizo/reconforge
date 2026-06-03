@@ -1,7 +1,7 @@
-"""Contract-output emitter (reconforge ↔ CyberBrain vault).
+"""Contract-output emitter (ReconForge to notes vault).
 
 Emits the per-run directory required by ``RECONFORGE_CONTRACT.md`` in the
-CyberBrain vault. After ``run_agentic_pipeline`` finalizes a ``PipelineResult``,
+notes vault. After ``run_agentic_pipeline`` finalizes a ``PipelineResult``,
 ``emit_run(ctx, result)`` writes:
 
     <RECONFORGE_OUTPUT>/<program-slug>/<YYYY-MM-DD-HHmm>/

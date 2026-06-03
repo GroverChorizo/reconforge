@@ -14,7 +14,7 @@
 #   anew_or_tee <path>              — pipe filter: dedupe if anew present, else tee
 #
 # Environment knobs (override in settings.json or shell):
-#   RECONFORGE_OUTPUT_DIR  default ~/Documents/CyberBrain/03-Research/Recon
+#   RECONFORGE_OUTPUT_DIR  default ~/Documents/ResearchVault/03-Research/Recon
 #   THREADS                default 10
 #   RATE_LIMIT_RPS         default 50
 #   WORDLIST_DIR           default /usr/share/seclists
@@ -24,7 +24,7 @@
 
 set -o pipefail
 
-: "${RECONFORGE_OUTPUT_DIR:=$HOME/Documents/CyberBrain/03-Research/Recon}"
+: "${RECONFORGE_OUTPUT_DIR:=$HOME/Documents/ResearchVault/03-Research/Recon}"
 : "${THREADS:=10}"
 : "${RATE_LIMIT_RPS:=50}"
 : "${WORDLIST_DIR:=/usr/share/seclists}"

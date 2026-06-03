@@ -1084,7 +1084,7 @@ def _complete_job(job: Job, status: str = "completed") -> None:
     with _lock:
         _jobs.pop(job.id, None)
     emit(f"{job.domain} → {status} ({n} subdomains)", "INFO", "pipeline")
-    # Push the run into CyberBrain + handle monitor scheduling. Never let this
+    # Push the run into the configured notes vault + handle monitor scheduling. Never let this
     # break job completion — the job already finished above.
     try:
         _post_complete(job, status)
@@ -1092,7 +1092,7 @@ def _complete_job(job: Job, status: str = "completed") -> None:
         emit(f"post-complete hook failed for {job.domain}: {e}", "ERROR", "pipeline")
 
 # ═══════════════════════════════════════════════════════════
-#  CYBERBRAIN HANDOFF + MONITOR SCHEDULING
+#  VAULT HANDOFF + MONITOR SCHEDULING
 # ═══════════════════════════════════════════════════════════
 def _utcnow() -> datetime:
     """Naive UTC now (non-deprecated equivalent of datetime.utcnow())."""
@@ -1121,7 +1121,7 @@ def _slugify_domain(domain: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (domain or "").lower()).strip("-") or "unknown"
 
 def _emit_contract(job: Job, status: str):
-    """Emit the CyberBrain contract dir for a completed job. Returns the run dir
+    """Emit the vault contract dir for a completed job. Returns the run dir
     Path (or None). Mirrors the ctx/result shape in __main__.py:_cmd_contract."""
     if not get_config("auto_emit_contract", True):
         return None
@@ -1147,17 +1147,17 @@ def _ingest_to_vault(run_dir) -> None:
     still requires a separate gateway commit (single-writer policy)."""
     if not get_config("auto_ingest_vault", True) or not run_dir:
         return
-    vault = os.path.expanduser(get_config("cyberbrain_vault_path", "~/Documents/CyberBrain"))
+    vault = os.path.expanduser(get_config("vault_path", "~/Documents/ResearchVault"))
     ingest = os.path.join(vault, "tools", "ingest_recon.py")
     if not os.path.exists(ingest):
-        emit(f"vault ingest not found at {ingest}; skipping", "WARNING", "cyberbrain")
+        emit(f"vault ingest not found at {ingest}; skipping", "WARNING", "vault")
         return
     try:
         subprocess.run([sys.executable, ingest, "--input", str(run_dir), "--post-message"],
                        timeout=300, capture_output=True, text=True)
-        emit(f"ingested {os.path.basename(str(run_dir))} → vault drafts", "INFO", "cyberbrain")
+        emit(f"ingested {os.path.basename(str(run_dir))} -> vault drafts", "INFO", "vault")
     except Exception as e:
-        emit(f"vault ingest failed: {e}", "WARNING", "cyberbrain")
+        emit(f"vault ingest failed: {e}", "WARNING", "vault")
 
 def _notify_new_assets(domain: str, new_assets: List[str]) -> None:
     """Fire ProjectDiscovery notify for newly-discovered assets."""
@@ -1206,7 +1206,7 @@ def _post_complete(job: Job, status: str) -> None:
             except Exception:
                 pass
     except Exception as e:
-        emit(f"contract emit failed for {job.domain}: {e}", "WARNING", "cyberbrain")
+        emit(f"contract emit failed for {job.domain}: {e}", "WARNING", "vault")
 
     # 3. Push to the vault (drafts + inbox message).
     _ingest_to_vault(run_dir)
@@ -1957,7 +1957,7 @@ def _active_program() -> Optional[Dict[str, Any]]:
 
     Set via config["active_program"] = "scopes/<name>.json" (relative to repo
     root, or absolute). Wizard will write this in Phase 11; for now, set with
-    set_config("active_program", "scopes/rivian.json") from a Python shell.
+    set_config("active_program", "scopes/examplecorp.json") from a Python shell.
     """
     path = get_config("active_program")
     if not path:
@@ -2763,7 +2763,7 @@ class ReconHandler(BaseHTTPRequestHandler):
             "threads","wordlist","tld_list","github_token","auto_backup",
             "backup_interval","cleanup_temp_h","cleanup_days","https_enabled",
             "opsec_http_proxy","opsec_rate_limit","opsec_random_agent","opsec_delay",
-            "auto_ingest_vault","notify_on_new_assets","cyberbrain_vault_path",
+            "auto_ingest_vault","notify_on_new_assets","vault_path",
         ]
         cfg = {f: get_config(f) for f in fields}
         cfg["tools"] = tools
@@ -2779,8 +2779,8 @@ class ReconHandler(BaseHTTPRequestHandler):
             # OPSEC (rule #1): applied to every target-touching tool the app runs.
             "opsec_http_proxy","opsec_rate_limit","opsec_random_agent",
             "opsec_delay","program_headers","platform_identities",
-            # CyberBrain handoff + monitoring.
-            "cyberbrain_vault_path","reconforge_output_dir","auto_emit_contract",
+            # Vault handoff + monitoring.
+            "vault_path","reconforge_output_dir","auto_emit_contract",
             "auto_ingest_vault","notify_on_new_assets",
         }
         for k, v in body.items():

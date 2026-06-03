@@ -27,7 +27,7 @@ def db(tmp_path):
 @pytest.fixture
 def acme(db):
     return P.create_program(
-        db, name="ACME", platform="intigriti", platform_handle="grover",
+        db, name="ACME", platform="intigriti", platform_handle="researcher",
         scope=[{"type": "wildcard", "value": "*.acme.com", "tier": 2}],
     )
 

@@ -300,7 +300,7 @@ techniques against existing surface. Their union covers both axes.
 ### Per-platform discipline
 
 - **HackerOne**: title format strict (`[VulnClass] in [asset] allows [impact]`); CVSS 4.0 vector in dedicated field.
-- **Intigriti**: header MUST include `X-Intigriti-Username: grover` on PoCs. Use the bullet structure (Exec / Tech / Repro / CVSS / Impact / Remediation / Evidence).
+- **Intigriti**: header MUST include `X-Intigriti-Username: researcher-handle` on PoCs. Use the bullet structure (Exec / Tech / Repro / CVSS / Impact / Remediation / Evidence).
 - **Bugcrowd**: pick the VRT category FIRST — the dropdown determines base severity. **No edits after submission.** Video PoC strongly preferred.
 - **YesWeHack**: business-impact narrative for non-technical readers. OWASP Top 10 + CWE both required.
 - **Synack**: invite-only. Structured JSON-like fields. Sequential screenshots numbered to match reproduction steps.

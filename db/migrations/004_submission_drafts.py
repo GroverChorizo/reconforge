@@ -4,8 +4,8 @@ One row per (finding × platform). human_approved is the gate that releases
 the draft for copy-to-clipboard in the SPA — auto-submission is out of
 scope for v1 (CLAUDE.md doctrine: human-in-the-loop only).
 
-obsidian_path is the absolute path to the BUG-XXX note the Reporter wrote
-into BugBountyVault/01-Programs/<program>/ — populated when the Reporter
+vault_path is the absolute path to the BUG-XXX note the Reporter wrote
+into ResearchVault/01-Programs/<program>/ — populated when the Reporter
 agent runs (Phase 9).
 """
 
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS submission_drafts (
     body_md         TEXT,
     severity        TEXT,
     weakness        TEXT,
-    obsidian_path   TEXT,
+    vault_path      TEXT,
     human_approved  INTEGER DEFAULT 0,
     created_at      TEXT DEFAULT (datetime('now')),
     updated_at      TEXT DEFAULT (datetime('now')),
