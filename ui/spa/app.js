@@ -14,8 +14,14 @@ const state = {
     role:           null,
     apiState:       null,             // last /api/state response
     target:         null,             // active target domain
+    program:        null,             // program / engagement name
     workspace:      null,             // workspace name
     vaultPath:      null,             // notes vault export root path
+    // Declared + backend-enforced scope. inScope/outScope are plain host
+    // strings; `active` flips true once /api/scope confirms scope_guard is
+    // wired to these exact rules.
+    scope:          { program: "", platform: "", inScope: [], outScope: [], active: false },
+    surfaceSubs:    null,             // /api/subdomains cache for the Asset Map
     riskMode:       "passive",        // "passive" | "active" | "aggressive"
     // Intake form draft. Bound to every field on the Intake page and updated
     // on each keystroke so a re-render (e.g. selecting a risk mode) never wipes
@@ -126,13 +132,19 @@ async function boot() {
     state.guideMode      = LS.get("guideMode", false);
     state.consoleState   = LS.get("consoleState", "expanded");
     state.target         = LS.get("target", null);
+    state.program        = LS.get("program", null);
     state.workspace      = LS.get("workspace", null);
     state.vaultPath      = LS.get("vaultPath", null);
     state.riskMode       = LS.get("riskMode", "passive");
-    // Seed the intake draft so a returning operator sees their saved target.
+    state.scope          = LS.get("scope", state.scope) || state.scope;
+    // Seed the intake draft so a returning operator sees their saved target +
+    // scope (scope/oos mirror the enforced rules as editable text).
     state.intakeDraft.target     = state.target || "";
+    state.intakeDraft.program    = state.program || "";
     state.intakeDraft.workspace  = state.workspace || "";
-    state.intakeDraft.vault = state.vaultPath || "";
+    state.intakeDraft.vault      = state.vaultPath || "";
+    state.intakeDraft.scope      = (state.scope.inScope || []).join("\n");
+    state.intakeDraft.oos        = (state.scope.outScope || []).join("\n");
 
     const r = await api("GET", "/api/state");
     if (r.status === 401 || !r.ok) {
@@ -237,6 +249,8 @@ function handleRouteChange() {
     renderKillchain();
     renderWorkspace();
     if (route === "settings") ensureConfig();
+    if (route === "surface")  ensureSurface();
+    if (route === "scope")    ensureScope();
 }
 
 function routeToPhase(route) {
@@ -338,6 +352,7 @@ function renderKillchain() {
 
 // ── Workspace router ─────────────────────────────────────────────
 function renderWorkspace() {
+    closeAC();   // detach any open autocomplete before we swap the DOM out
     const route = currentRoute();
     const fn = PAGES[route] || pageNotFound(route);
     const html = fn();
@@ -445,35 +460,70 @@ PAGES.intake = function () {
 };
 
 PAGES.scope = function () {
+    const sc = state.scope || { inScope: [], outScope: [], active: false };
+    const inList  = (sc.inScope  || []).slice();
+    const outList = (sc.outScope || []).slice();
+    const enforced = !!sc.active && !!state.target;
+    const enfBadge = enforced
+        ? `<span class="badge badge-success">ENFORCED</span>`
+        : `<span class="badge badge-muted">NOT WIRED</span>`;
     return `
       ${renderWorkspaceHead("Scope Validation", "Target", "Confirm authorization before any active probe.")}
       <div class="workspace-cols">
         <div>
           ${renderTargetStatusPanel()}
-          ${panel("Scope rules", `
+          ${panel(`Declared scope ${enfBadge}`, `
             <div class="mono" style="font-size:12px;">
-              <div class="text-success">in scope</div>
-              <ul style="list-style: none; padding-left: 14px;">
-                ${(state.target ? [`*.${state.target}`, state.target] : []).map(s => `<li>• ${escapeHTML(s)}</li>`).join("") || `<li class="text-mute">— load a target first</li>`}
+              <div class="text-success">in scope (${inList.length})</div>
+              <ul class="scope-list">
+                ${inList.length ? inList.map(s => `<li>• ${escapeHTML(s)}</li>`).join("")
+                                : `<li class="text-mute">— load a target first</li>`}
               </ul>
               <div class="muted-line"></div>
-              <div class="text-error">out of scope</div>
-              <ul style="list-style: none; padding-left: 14px; color: var(--text-muted);">
-                <li>(none declared)</li>
+              <div class="text-error">out of scope (${outList.length})</div>
+              <ul class="scope-list text-mute">
+                ${outList.length ? outList.map(s => `<li>• ${escapeHTML(s)}</li>`).join("")
+                                 : `<li>(none declared)</li>`}
               </ul>
             </div>
+          `)}
+          ${panel("Edit scope", `
+            <div class="form-grid">
+              <div class="full">
+                <label class="form-label">In scope — one host/wildcard/CIDR per line</label>
+                <textarea id="scope-in" rows="4" class="mono" style="width:100%;" spellcheck="false"
+                  placeholder="*.example.com&#10;example.com&#10;203.0.113.0/24">${escapeHTML(inList.join("\n"))}</textarea>
+              </div>
+              <div class="full">
+                <label class="form-label">Out of scope — wins over in-scope on conflict</label>
+                <textarea id="scope-out" rows="3" class="mono" style="width:100%;" spellcheck="false"
+                  placeholder="careers.example.com&#10;*.dev.example.com">${escapeHTML(outList.join("\n"))}</textarea>
+              </div>
+            </div>
+            <div class="spacer-md"></div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button class="btn btn-primary" onclick="ReconForge.saveScope()" ${state.target ? "" : "disabled"}>▸ Save &amp; enforce scope</button>
+              <button class="btn btn-ghost" onclick="ReconForge.go('passive')">Proceed to Passive Recon →</button>
+            </div>
+            ${state.target ? "" : `<div class="form-help">Load a target on the Intake page first.</div>`}
           `)}
         </div>
         <div>
           ${panel("Scope guard", `
             <div class="status-panel">
-              <dt>Enforcement</dt><dd><span class="badge badge-success">ACTIVE</span></dd>
+              <dt>Enforcement</dt><dd>${enforced
+                  ? `<span class="badge badge-success">ACTIVE</span>`
+                  : `<span class="badge badge-muted">PENDING</span>`}</dd>
+              <dt>Active program</dt><dd class="mono" style="font-size:11px;">${escapeHTML(sc.programPath || (enforced ? "scopes/…json" : "—"))}</dd>
               <dt>Module</dt><dd class="mono" style="font-size:11px;">scope_guard.py</dd>
               <dt>Hook</dt><dd>per-tool dispatch</dd>
               <dt>OOS Action</dt><dd><span class="badge badge-error">REFUSE</span></dd>
             </div>
-            <div class="form-help">Every command fired through ReconForge is validated against the scope module before subprocess spawn. This UI cannot override that check.</div>
+            <div class="form-help">${enforced
+                ? "scope_guard validates every dispatched target against these exact rules before any subprocess spawns. Out-of-scope wins over in-scope. This UI cannot override that check."
+                : "Scope is declared but not yet wired to the backend. Click <span class=\"mono\">Save &amp; enforce scope</span> to push these rules to scope_guard so they gate every job and tool."}</div>
           `)}
+          ${state.guideMode ? guidePanel("Why wire scope", "A wildcard (*.example.com) does NOT include the apex example.com unless you list it. Out-of-scope entries always win over an in-scope match — so a single careers.example.com line will block that host even though it also matches *.example.com.") : ""}
         </div>
       </div>
     `;
@@ -505,26 +555,83 @@ PAGES.js = function () { return renderMethodologyPage("js", "JavaScript Mining",
 ]); };
 
 PAGES.surface = function () {
-    const subs = (state.apiState && state.apiState.targets && state.apiState.targets.length)
-        ? state.apiState.targets.slice(0, 12).map(t => t.domain || t)
-        : (state.target ? [`api.${state.target}`, `admin.${state.target}`, `static.${state.target}`] : []);
-    let tree;
-    if (!subs.length) {
-        tree = `<span class="surface-mute">(no surface mapped yet)</span>`;
-    } else {
-        tree = `<span class="surface-host">${escapeHTML(state.target || "target")}</span>\n`;
-        subs.forEach((s, i) => {
-            const last = i === subs.length - 1;
-            const branch = last ? "└──" : "├──";
-            tree += `<span class="surface-mute">${branch}</span> <span class="surface-host">${escapeHTML(s)}</span>\n`;
+    const sc   = state.scope || {};
+    const apex = state.target || "target";
+    // Concrete declared hosts (skip wildcards, the apex itself, and CIDRs).
+    const declared  = (sc.inScope || []).filter(h => h && !h.startsWith("*.") && h !== apex && h.indexOf("/") === -1);
+    const wildcards = (sc.inScope || []).filter(h => h && h.startsWith("*."));
+    const discovered = state.surfaceSubs;   // null = loading, [] = none yet
+
+    const nodes = new Map();
+    declared.forEach(h => nodes.set(h, { host: h, src: "scope" }));
+    if (Array.isArray(discovered)) {
+        discovered.forEach(s => {
+            const h = (s.subdomain || s.domain || s || "").toString();
+            if (!h) return;
+            const prev = nodes.get(h);
+            nodes.set(h, { host: h, src: prev ? "both" : "recon",
+                           status: s.http_status, title: s.http_title, interesting: s.interesting });
         });
     }
+    const list = [...nodes.values()].sort((a, b) => a.host.localeCompare(b.host));
+
+    let tree;
+    if (discovered === null && !declared.length) {
+        tree = `<span class="surface-mute">resolving surface…</span>`;
+    } else if (!list.length && !wildcards.length) {
+        tree = `<span class="surface-host">${escapeHTML(apex)}</span>\n` +
+               `<span class="surface-mute">└── (no hosts yet — declare scope or run a job)</span>`;
+    } else {
+        tree = `<span class="surface-host">${escapeHTML(apex)}</span>`;
+        wildcards.forEach(w => {
+            tree += `\n<span class="surface-mute">├──</span> <span class="surface-path">${escapeHTML(w)}</span> <span class="surface-mute">(wildcard)</span>`;
+        });
+        list.forEach((n, i) => {
+            const branch = (i === list.length - 1) ? "└──" : "├──";
+            tree += `\n<span class="surface-mute">${branch}</span> <span class="surface-host">${escapeHTML(n.host)}</span>${surfaceTag(n)}`;
+        });
+    }
+    const discCount = Array.isArray(discovered) ? discovered.length : 0;
+    const liveCount = Array.isArray(discovered) ? discovered.filter(s => s.http_status).length : 0;
     return `
-      ${renderWorkspaceHead("Asset Map", "Map", "Tree view of mapped hosts and paths.")}
-      ${panel("Surface tree", `<div class="surface-tree">${tree}</div>`)}
-      ${state.guideMode ? guidePanel("Why a tree", "The tree representation is readable, diff-friendly, and exports cleanly to markdown. Graph visualization can come later when the asset count makes it worth the cognitive overhead.") : ""}
+      ${renderWorkspaceHead("Asset Map", "Map", "Hosts from your declared scope + everything recon has discovered.")}
+      ${renderMetrics([
+        { label: "Declared hosts", value: declared.length },
+        { label: "Discovered",     value: discCount, kind: discCount ? "processing" : "" },
+        { label: "Live (HTTP)",    value: liveCount, kind: liveCount ? "success" : "" },
+      ])}
+      ${panel(`Surface tree — ${escapeHTML(apex)}`, `
+        <div class="surface-tree">${tree}</div>
+        <div class="surface-actions">
+          <button class="btn btn-sm btn-ghost" onclick="ReconForge.refreshSurface()">↻ Refresh</button>
+          <button class="btn btn-sm btn-ghost" onclick="ReconForge.go('jobs')">Run a scan →</button>
+        </div>
+      `)}
+      ${state.guideMode ? guidePanel("Where these come from", "Declared hosts are the concrete in-scope entries you typed on the Scope page (wildcards are shown but not expanded). Discovered hosts come from completed pipeline jobs — subfinder/httpx/etc. — via /api/subdomains. Submit a scan on the Jobs tab to populate them.") : ""}
     `;
 };
+
+function surfaceTag(n) {
+    if (n.status) {
+        const cls = n.status < 300 ? "success" : (n.status < 400 ? "processing" : (n.status < 500 ? "muted" : "error"));
+        const bang = n.interesting ? ` <span class="badge badge-error">!</span>` : "";
+        return ` <span class="badge badge-${cls}">${n.status}</span>${bang}`;
+    }
+    return ` <span class="badge badge-muted">${n.src === "scope" ? "scope" : "found"}</span>`;
+}
+
+async function ensureSurface() {
+    if (!state.target) { state.surfaceSubs = []; if (currentRoute() === "surface") renderWorkspace(); return; }
+    const r = await api("GET", "/api/subdomains/" + encodeURIComponent(state.target));
+    state.surfaceSubs = (r.ok && r.data) ? (r.data.data || r.data || []) : [];
+    if (currentRoute() === "surface") renderWorkspace();
+}
+
+function refreshSurface() {
+    state.surfaceSubs = null;
+    renderWorkspace();
+    ensureSurface();
+}
 
 PAGES.fingerprint = function () { return renderMethodologyPage("fingerprint", "Tech Fingerprint", "Map", "active", [
     { label: "httpx tech-detect (full)", cmd: `httpx -l alive.txt -tech-detect -title -server -jarm -json -o httpx-tech.jsonl`, risk: "active" },
@@ -584,9 +691,21 @@ PAGES.findings = function () {
 };
 
 PAGES.notes = function () {
+    const notes = LS.get(wsKey("notes"), "") || "";
+    const ws = state.workspace || state.target || "default";
     return `
       ${renderWorkspaceHead("Notes", "Evidence", "Session notes and operator commentary.")}
-      ${panel("Session notes", `<textarea style="width:100%; min-height: 240px; font-family: var(--font-mono);" placeholder="paste payloads, observations, follow-ups…"></textarea><div class="spacer-sm"></div><div style="display:flex; gap:8px;"><button class="btn btn-primary" onclick="ReconForge.toast('Notes saved to workspace.', 'success')">▸ Save</button><button class="btn btn-ghost" onclick="ReconForge.toast('Note exported to vault.', 'success')">Export to vault</button></div>`)}
+      ${panel(`Session notes · ${escapeHTML(ws)}`, `
+        <textarea id="notes-area" class="mono" style="width:100%; min-height: 280px;"
+          placeholder="paste payloads, observations, follow-ups…&#10;&#10;(commands sent here via 'Add to Notes' land at the bottom)">${escapeHTML(notes)}</textarea>
+        <div class="spacer-sm"></div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-primary" onclick="ReconForge.saveNotes()">▸ Save</button>
+          <button class="btn btn-ghost" onclick="ReconForge.copyNotes()">Copy all</button>
+          <button class="btn btn-ghost" onclick="ReconForge.clearNotes()">Clear</button>
+        </div>
+        <div class="form-help">Notes persist in this browser, scoped to the active workspace.</div>
+      `)}
     `;
 };
 
@@ -696,13 +815,46 @@ PAGES.queue = function () {
 PAGES.workers = function () {
     const s = state.apiState || {};
     const workers = s.workers || {};
-    const rows = Object.keys(workers).map(k => {
+    const keys = Object.keys(workers).sort();
+    if (!keys.length) {
+        return `
+          ${renderWorkspaceHead("Workers", "Operations", "Per-tool concurrency gates.")}
+          ${panel("Tool gates", `<div class="tbl-empty">No workers reported yet. Gates initialise on first job dispatch.</div>`)}
+        `;
+    }
+    const totalRunning = keys.reduce((a, k) => a + (workers[k].running || 0), 0);
+    const totalWaiting = keys.reduce((a, k) => a + (workers[k].waiting || 0), 0);
+    const cards = keys.map(k => {
         const w = workers[k] || {};
-        return `<tr><td class="mono">${escapeHTML(k)}</td><td>${w.running ?? 0}</td><td>${w.waiting ?? 0}</td><td>${w.max_concurrent ?? "—"}</td></tr>`;
+        const running = w.running || 0;
+        const waiting = w.waiting || 0;
+        const max     = w.max || w.max_concurrent || 0;   // backend emits `max`
+        const busyPct = max ? Math.min(100, Math.round((running / max) * 100)) : 0;
+        const st = running ? "busy" : (waiting ? "waiting" : "idle");
+        const pill = running ? "BUSY" : (waiting ? "WAIT" : "IDLE");
+        return `
+          <div class="worker-card" data-state="${st}">
+            <div class="worker-card-head">
+              <span class="worker-name mono">${escapeHTML(k)}</span>
+              <span class="worker-pill" data-state="${st}">${pill}</span>
+            </div>
+            <div class="worker-stats">
+              <div><span class="worker-stat-val">${running}</span><span class="worker-stat-lbl">running</span></div>
+              <div><span class="worker-stat-val">${waiting}</span><span class="worker-stat-lbl">waiting</span></div>
+              <div><span class="worker-stat-val">${max || "—"}</span><span class="worker-stat-lbl">max</span></div>
+            </div>
+            <div class="worker-bar"><div class="worker-bar-fill" style="width:${busyPct}%"></div></div>
+          </div>
+        `;
     }).join("");
     return `
-      ${renderWorkspaceHead("Workers", "Operations", "Per-tool concurrency gates.")}
-      ${panel("Tool gates", rows ? `<table class="tbl"><thead><tr><th>Tool</th><th>Running</th><th>Waiting</th><th>Max</th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="tbl-empty">No workers reported.</div>`)}
+      ${renderWorkspaceHead("Workers", "Operations", "Per-tool concurrency gates — live.")}
+      ${renderMetrics([
+        { label: "Tool gates",  value: keys.length },
+        { label: "Running now",  value: totalRunning, kind: totalRunning ? "processing" : "" },
+        { label: "Waiting",      value: totalWaiting, kind: totalWaiting ? "error" : "" },
+      ])}
+      <div class="worker-cards">${cards}</div>
     `;
 };
 
@@ -1015,8 +1167,11 @@ function pageNotFound(route) {
 }
 
 // Methodology page template — used by passive/active/urls/js/test/* pages.
+// Each command is an editable builder (inline-edit + autocomplete); baselines
+// are the exact commands defined per page and are restorable via Reset.
 function renderMethodologyPage(routeId, title, group, defaultRisk, commands) {
-    let html = renderWorkspaceHead(title, group, "Methodology-phase commands. Copy, run, archive.");
+    let html = renderWorkspaceHead(title, group,
+        "Editable command builders — type to get flag suggestions, ↵/Tab to accept, then copy or save.");
     html += `<div class="workspace-cols"><div>`;
     commands.forEach((c, i) => {
         html += renderForge({
@@ -1027,23 +1182,28 @@ function renderMethodologyPage(routeId, title, group, defaultRisk, commands) {
             label: c.label,
             cmd: c.cmd,
             note: c.note,
-            idx: i,
+            cmdId: routeId + "-" + i,
         });
     });
     html += `</div><div>`;
     html += renderTargetStatusPanel();
-    html += renderReconChecklist();
+    html += renderSavedCommands();
     html += `</div></div>`;
     return html;
 }
 
 function renderForge(opts) {
     const riskBadge = `<span class="risk-badge" data-risk="${opts.risk}">${opts.risk.toUpperCase()}</span>`;
-    const id = "forge-cmd-" + opts.idx;
+    const cmdId = opts.cmdId;
+    CMD_BASELINES[cmdId] = opts.cmd;
+    CMD_LABELS[cmdId]    = opts.label;
+    const saved  = cmdEditGet(cmdId);
+    const cmd    = (saved != null) ? saved : opts.cmd;
+    const edited = (saved != null && saved !== opts.cmd);
     return `
       <div class="forge">
         <div class="forge-head">
-          <span>${escapeHTML(opts.label)}</span>
+          <span>${escapeHTML(opts.label)}${edited ? ` <span class="forge-edited">edited</span>` : ""}</span>
           ${riskBadge}
         </div>
         <dl class="forge-meta">
@@ -1051,11 +1211,19 @@ function renderForge(opts) {
           <dt>Target</dt> <dd>${escapeHTML(opts.target)}</dd>
           <dt>Output</dt> <dd class="text-mute">${escapeHTML(opts.outputDir)}</dd>
         </dl>
-        <div class="forge-cmd" id="${id}">${escapeHTML(opts.cmd)}</div>
+        <div class="forge-cmd-wrap">
+          <span class="forge-cmd-prompt">$</span>
+          <textarea class="forge-cmd-edit mono" data-cmd="${cmdId}" spellcheck="false" autocomplete="off"
+            rows="${cmdRows(cmd)}"
+            oninput="ReconForge.onCmdInput(event)"
+            onkeydown="ReconForge.onCmdKey(event)"
+            onblur="ReconForge.onCmdBlur(event)">${escapeHTML(cmd)}</textarea>
+        </div>
         <div class="forge-actions">
-          <button class="btn btn-sm btn-primary" onclick="ReconForge.copyForge('${id}')">▸ Copy</button>
-          <button class="btn btn-sm btn-ghost" onclick="ReconForge.toast('Saved to workspace.', 'success')">Save to Workspace</button>
-          <button class="btn btn-sm btn-ghost" onclick="ReconForge.toast('Added to notes.', 'success')">Add to Notes</button>
+          <button class="btn btn-sm btn-primary" onclick="ReconForge.copyCmd('${cmdId}')">▸ Copy</button>
+          <button class="btn btn-sm btn-ghost" onclick="ReconForge.saveCmdToWorkspace('${cmdId}')">Save to Workspace</button>
+          <button class="btn btn-sm btn-ghost" onclick="ReconForge.addCmdToNotes('${cmdId}')">Add to Notes</button>
+          ${edited ? `<button class="btn btn-sm btn-ghost" onclick="ReconForge.resetCmd('${cmdId}')">Reset</button>` : ""}
         </div>
         ${state.guideMode && opts.note ? `
           <div class="forge-guide">
@@ -1066,6 +1234,213 @@ function renderForge(opts) {
       </div>
     `;
 }
+
+// ── Command builder: persistence + saved-command list ─────────────
+const CMD_BASELINES = {};   // cmdId -> baseline command text (for Reset)
+const CMD_LABELS    = {};   // cmdId -> human label
+
+function cmdRows(text) {
+    const n = String(text || "").split("\n").length;
+    return Math.max(2, Math.min(8, n + 1));
+}
+function cmdEditKey(cmdId) { return "cmdedit:" + (state.workspace || state.target || "default") + ":" + cmdId; }
+function cmdEditGet(cmdId) { return LS.get(cmdEditKey(cmdId), null); }
+function cmdEditSet(cmdId, text) {
+    // Drop the override when it equals the baseline so the card stops showing
+    // "edited" / Reset once the operator types it back to default.
+    LS.set(cmdEditKey(cmdId), text === CMD_BASELINES[cmdId] ? null : text);
+}
+function cmdFieldEl(cmdId)    { return document.querySelector('.forge-cmd-edit[data-cmd="' + cmdId + '"]'); }
+function currentCmdText(cmdId) {
+    const el = cmdFieldEl(cmdId);
+    if (el) return el.value;
+    const saved = cmdEditGet(cmdId);
+    return (saved != null) ? saved : (CMD_BASELINES[cmdId] || "");
+}
+
+function copyCmd(cmdId)  { copyToClipboard(currentCmdText(cmdId)); }
+function resetCmd(cmdId) {
+    LS.set(cmdEditKey(cmdId), null);
+    consoleLog("log", "command reset to baseline");
+    renderWorkspace();
+}
+function saveCmdToWorkspace(cmdId) {
+    const cmd = currentCmdText(cmdId).trim();
+    if (!cmd) { toast("Nothing to save.", "error"); return; }
+    const arr = wsList("commands");
+    arr.unshift({ label: CMD_LABELS[cmdId] || "", cmd, route: currentRoute(), ts: Date.now() });
+    if (arr.length > 100) arr.length = 100;
+    wsSetList("commands", arr);
+    consoleLog("success", "saved command → workspace");
+    toast("Saved to workspace.", "success");
+    renderWorkspace();
+}
+function addCmdToNotes(cmdId) {
+    const cmd = currentCmdText(cmdId).trim();
+    if (!cmd) { toast("Nothing to add.", "error"); return; }
+    const k = wsKey("notes");
+    const prev  = LS.get(k, "") || "";
+    const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+    LS.set(k, prev + `\n## ${CMD_LABELS[cmdId] || "command"} (${stamp})\n${cmd}\n`);
+    consoleLog("success", "appended command → notes");
+    toast("Added to notes.", "success");
+}
+
+// Workspace-scoped localStorage (saved commands + notes live per workspace).
+function wsKey(kind)        { return "ws:" + (state.workspace || state.target || "default") + ":" + kind; }
+function wsList(kind)       { return LS.get(wsKey(kind), []) || []; }
+function wsSetList(kind, a) { LS.set(wsKey(kind), a); }
+
+function renderSavedCommands() {
+    const saved = wsList("commands");
+    if (!saved.length) {
+        return panel("Saved commands", `<div class="tbl-empty">Save a command to pin it to this workspace.</div>`);
+    }
+    return panel(`Saved commands (${saved.length})`, `
+      <ul class="saved-cmds">
+        ${saved.map((c, i) => `
+          <li>
+            <div class="saved-cmd-top">
+              <span class="saved-cmd-label">${escapeHTML(c.label || c.route || "command")}</span>
+              <span class="saved-cmd-actions">
+                <button class="btn btn-sm btn-ghost" onclick="ReconForge.copySaved(${i})">copy</button>
+                <button class="btn btn-sm btn-ghost" onclick="ReconForge.removeSaved(${i})">✕</button>
+              </span>
+            </div>
+            <code class="saved-cmd-text mono">${escapeHTML(c.cmd)}</code>
+          </li>
+        `).join("")}
+      </ul>
+    `);
+}
+function copySaved(i)   { const a = wsList("commands"); if (a[i]) copyToClipboard(a[i].cmd); }
+function removeSaved(i) { const a = wsList("commands"); a.splice(i, 1); wsSetList("commands", a); renderWorkspace(); }
+
+// ── Command autocomplete (inline flag suggestions) ────────────────
+const AC = { box: null, field: null, items: [], sel: 0, open: false, word: "", wordStart: 0 };
+
+// Curated catalog. "*" = global pipe/redirect helpers; per-tool keys list the
+// flags worth reaching for. The page baselines already encode sane defaults —
+// these just let the operator tune in-place without leaving the field.
+const CMD_SUGGEST = {
+    "*": [
+        { t: "| anew out.txt", h: "dedupe + append-only-new" },
+        { t: "| sort -u", h: "unique sort" },
+        { t: "| tee out.txt", h: "save while streaming" },
+        { t: "| httpx -silent", h: "probe live" },
+        { t: "> out.txt", h: "redirect to file" },
+    ],
+    subfinder:  [ {t:"-all",h:"every source"},{t:"-recursive",h:"recurse"},{t:"-silent",h:"hosts only"},{t:"-active",h:"resolve live"},{t:"-rl 100",h:"rate limit"},{t:"-t 50",h:"threads"},{t:"-nW",h:"drop wildcards"},{t:"-o subs/sf.txt",h:"output"} ],
+    amass:      [ {t:"enum",h:""},{t:"-passive",h:"no active DNS"},{t:"-active",h:"+ resolution"},{t:"-brute",h:"brute force"},{t:"-d",h:"domain"},{t:"-o out.txt",h:"output"},{t:"-config config.ini",h:"datasources"} ],
+    "github-subdomains": [ {t:"-t $GITHUB_TOKEN",h:"token"},{t:"-e",h:"extended"},{t:"-raw",h:"raw output"},{t:"-o subs/gh.txt",h:"output"} ],
+    httpx:      [ {t:"-title",h:""},{t:"-tech-detect",h:""},{t:"-status-code",h:""},{t:"-follow-redirects",h:""},{t:"-ip",h:""},{t:"-cname",h:""},{t:"-cdn",h:""},{t:"-jarm",h:"TLS fp"},{t:"-json",h:""},{t:"-silent",h:""},{t:"-mc 200,403",h:"match codes"},{t:"-rl 50",h:"rate limit"},{t:"-threads 50",h:""},{t:"-web-server",h:""},{t:"-location",h:""} ],
+    nuclei:     [ {t:"-severity low,medium,high,critical",h:""},{t:"-tags cve,exposure",h:""},{t:"-rl 150",h:"rate limit"},{t:"-c 25",h:"concurrency"},{t:"-jsonl",h:""},{t:"-o out.jsonl",h:""},{t:"-t ~/nuclei-templates",h:"templates"},{t:"-etags fuzz",h:"exclude"},{t:"-timeout 10",h:""},{t:"-retries 2",h:""} ],
+    dnsx:       [ {t:"-resp",h:"records"},{t:"-a",h:""},{t:"-cname",h:""},{t:"-silent",h:""},{t:"-rl 1000",h:""},{t:"-t 100",h:"threads"},{t:"-o out.txt",h:""} ],
+    naabu:      [ {t:"-tp 1000",h:"top ports"},{t:"-p -",h:"all ports"},{t:"-rate 5000",h:""},{t:"-silent",h:""},{t:"-nmap-cli 'nmap -sV'",h:"hand to nmap"},{t:"-o ports.txt",h:""} ],
+    puredns:    [ {t:"resolve",h:""},{t:"-r resolvers.txt",h:""},{t:"--rate-limit 1000",h:""},{t:"-w resolved.txt",h:"write"},{t:"--skip-wildcard-filter",h:""} ],
+    gau:        [ {t:"--subs",h:"include subs"},{t:"--threads 200",h:""},{t:"--fc 404",h:"filter codes"},{t:"--blacklist png,jpg,css",h:""} ],
+    waybackurls:[ {t:"| anew way.txt",h:"dedupe out"} ],
+    unfurl:     [ {t:"-u keys",h:"unique keys"},{t:"-u domains",h:""},{t:"-u paths",h:""},{t:"-u values",h:""} ],
+    katana:     [ {t:"-d 3",h:"depth"},{t:"-jc",h:"JS crawl"},{t:"-kf all",h:"known files"},{t:"-silent",h:""},{t:"-o urls.txt",h:""},{t:"-hl",h:"headless"} ],
+    jsluice:    [ {t:"urls",h:""},{t:"secrets",h:""},{t:"tree",h:""} ],
+    trufflehog: [ {t:"filesystem",h:""},{t:"git",h:""},{t:"--json",h:""},{t:"--no-update",h:""},{t:"--only-verified",h:"verified only"} ],
+    tlsx:       [ {t:"-san",h:""},{t:"-cn",h:""},{t:"-silent",h:""},{t:"-resp-only",h:""},{t:"-o tls.txt",h:""} ],
+    cdncheck:   [ {t:"-resp",h:""},{t:"-cdn",h:""},{t:"-waf",h:""},{t:"-cloud",h:""},{t:"-o cdn.txt",h:""} ],
+    arjun:      [ {t:"-t 10",h:"threads"},{t:"--rate-limit 5",h:""},{t:"-oT params.txt",h:""},{t:"-m GET,POST",h:"methods"},{t:"--stable",h:"slow/accurate"} ],
+    paramspider:[ {t:"-d",h:"domain"},{t:"-s",h:"stream stdout"} ],
+    x8:         [ {t:"-w wordlist.txt",h:""},{t:"--output-format url",h:""},{t:"-X POST",h:""},{t:"-b 'k=v'",h:"body"} ],
+    dalfox:     [ {t:"pipe",h:"stdin urls"},{t:"url",h:"single url"},{t:"-b $BLIND_XSS_URL",h:"blind"},{t:"--silence",h:""},{t:"--deep-domxss",h:""},{t:"--skip-bav",h:""},{t:"--worker 100",h:""},{t:"-o xss.txt",h:""} ],
+    sqlmap:     [ {t:"--batch",h:"no prompts"},{t:"--random-agent",h:""},{t:"--level 5",h:""},{t:"--risk 3",h:""},{t:"--dbs",h:"enum dbs"},{t:"--tamper=between,space2comment",h:"WAF bypass"},{t:"--threads 10",h:""},{t:"--crawl=2",h:""} ],
+    Gxss:       [ {t:"-p Xss",h:"param"},{t:"-c 100",h:"concurrency"},{t:"-o refl.txt",h:""} ],
+    qsreplace:  [ {t:"'\"><script>alert(1)</script>'",h:"xss probe"},{t:"FUZZ",h:"placeholder"},{t:"/etc/passwd",h:"lfi probe"} ],
+    curl:       [ {t:"-s",h:"silent"},{t:"-sI",h:"head only"},{t:"-k",h:"insecure TLS"},{t:"-X POST",h:""},{t:"-H 'Content-Type: application/json'",h:""},{t:"--path-as-is",h:""},{t:"-d '{}'",h:"body"} ],
+    nikto:      [ {t:"-h",h:"host"},{t:"-ssl",h:""},{t:"-Tuning 1234",h:"test classes"},{t:"-o nikto.txt",h:""} ],
+    ffuf:       [ {t:"-w wordlist.txt",h:""},{t:"-u https://HOST/FUZZ",h:""},{t:"-mc 200,301,403",h:""},{t:"-rate 50",h:""},{t:"-o ffuf.json",h:""} ],
+};
+
+function ensureACBox() {
+    if (AC.box) return AC.box;
+    const box = document.createElement("div");
+    box.className = "cmd-suggest";
+    box.hidden = true;
+    document.body.appendChild(box);
+    AC.box = box;
+    return box;
+}
+function acCurrentWord(field) {
+    const pos  = field.selectionStart || 0;
+    const upto = field.value.slice(0, pos);
+    const m    = upto.match(/(\S*)$/);
+    const word = m ? m[1] : "";
+    return { word, start: pos - word.length };
+}
+function onCmdInput(e) {
+    const field = e.target;
+    const cmdId = field.getAttribute("data-cmd");
+    if (cmdId) cmdEditSet(cmdId, field.value);
+    acUpdate(field);
+}
+function acUpdate(field) {
+    AC.field = field;
+    const { word, start } = acCurrentWord(field);
+    const tool = (field.value.trim().split(/\s+/)[0] || "").replace(/^.*\//, "");
+    const pool = (CMD_SUGGEST[tool] || []).concat(CMD_SUGGEST["*"]);
+    const w = word.toLowerCase();
+    let items = w ? pool.filter(s => s.t.toLowerCase().includes(w)) : pool;
+    const seen = new Set();
+    items = items.filter(s => (seen.has(s.t) ? false : seen.add(s.t))).slice(0, 8);
+    if (!items.length) { closeAC(); return; }
+    AC.items = items; AC.sel = 0; AC.word = word; AC.wordStart = start; AC.open = true;
+    renderAC(field);
+}
+function renderAC(field) {
+    const box = ensureACBox();
+    box.innerHTML = AC.items.map((s, i) => `
+      <div class="cmd-suggest-item ${i === AC.sel ? "active" : ""}" onmousedown="ReconForge.acPick(event, ${i})">
+        <span class="cmd-suggest-text mono">${escapeHTML(s.t)}</span>
+        ${s.h ? `<span class="cmd-suggest-hint">${escapeHTML(s.h)}</span>` : ""}
+      </div>
+    `).join("");
+    const r = field.getBoundingClientRect();
+    box.style.left     = Math.round(r.left) + "px";
+    box.style.top      = Math.round(r.bottom + 4) + "px";
+    box.style.minWidth = Math.round(Math.min(r.width, 540)) + "px";
+    box.hidden = false;
+}
+function closeAC() {
+    AC.open = false; AC.items = []; AC.field = null;
+    if (AC.box) AC.box.hidden = true;
+}
+function acInsert(i) {
+    const field = AC.field;
+    if (!field) return;
+    const s = AC.items[i];
+    if (!s) return;
+    const pos    = field.selectionStart || (AC.wordStart + AC.word.length);
+    const before = field.value.slice(0, AC.wordStart);
+    const after  = field.value.slice(pos);
+    const sep    = (before && !/\s$/.test(before)) ? " " : "";
+    const trail  = (after === "" || /^\s/.test(after)) ? "" : " ";
+    field.value  = before + sep + s.t + trail + after;
+    const caret  = (before + sep + s.t).length;
+    field.setSelectionRange(caret, caret);
+    const cmdId = field.getAttribute("data-cmd");
+    if (cmdId) cmdEditSet(cmdId, field.value);
+    field.focus();
+    acUpdate(field);   // re-filter from the new caret position
+}
+function acPick(e, i) { e.preventDefault(); acInsert(i); }
+function onCmdKey(e) {
+    if (!AC.open) {
+        if ((e.ctrlKey || e.metaKey) && e.code === "Space") { e.preventDefault(); acUpdate(e.target); }
+        return;
+    }
+    if (e.key === "ArrowDown")      { e.preventDefault(); AC.sel = Math.min(AC.items.length - 1, AC.sel + 1); renderAC(e.target); }
+    else if (e.key === "ArrowUp")   { e.preventDefault(); AC.sel = Math.max(0, AC.sel - 1); renderAC(e.target); }
+    else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); acInsert(AC.sel); }
+    else if (e.key === "Escape")    { e.preventDefault(); e.stopPropagation(); closeAC(); }
+}
+function onCmdBlur() { setTimeout(closeAC, 120); }
 
 function vaultSub(route) {
     const base = state.vaultPath || ("ResearchVault/BugBounty/" + (state.workspace || "<workspace>"));
@@ -1189,34 +1564,131 @@ function executePalette(i) {
 }
 
 // ── Intake handlers ──────────────────────────────────────────────
-function saveIntake() {
-    const target    = (document.getElementById("intake-target").value || "").trim();
-    const workspace = (document.getElementById("intake-workspace").value || "").trim() || target;
-    const vault = (document.getElementById("intake-vault").value || "").trim();
+function val(id) { const el = document.getElementById(id); return el ? (el.value || "") : ""; }
+function parseScopeLines(text) {
+    return String(text || "").split(/[\n,]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
+}
+
+async function saveIntake() {
+    const target    = val("intake-target").trim().toLowerCase();
+    const program   = val("intake-program").trim();
+    const workspace = val("intake-workspace").trim() || target;
+    const vault     = val("intake-vault").trim();
+    const inScope   = parseScopeLines(val("intake-scope"));
+    const outScope  = parseScopeLines(val("intake-oos"));
     if (!target) { toast("Target domain required.", "error"); return; }
-    state.target = target;
+    // Empty in-scope defaults to apex + wildcard (matches the backend default).
+    const effIn = inScope.length ? inScope : [target, "*." + target];
+
+    state.target    = target;
+    state.program   = program;
     state.workspace = workspace;
     state.vaultPath = vault || ("ResearchVault/BugBounty/" + target);
-    state.intakeDraft.target     = target;
-    state.intakeDraft.workspace  = workspace;
-    state.intakeDraft.vault = state.vaultPath;
-    LS.set("target", target);
-    LS.set("workspace", workspace);
-    LS.set("vaultPath", state.vaultPath);
+    state.scope     = { program, platform: (state.scope && state.scope.platform) || "",
+                        inScope: effIn, outScope, active: false, programPath: "" };
+    state.intakeDraft = { target, program, workspace, vault: state.vaultPath,
+                          scope: effIn.join("\n"), oos: outScope.join("\n") };
+    LS.set("target", target);   LS.set("program", program);
+    LS.set("workspace", workspace); LS.set("vaultPath", state.vaultPath);
+    LS.set("scope", state.scope);
     consoleLog("select", "target loaded: " + target);
-    renderShellChrome();
-    renderSidebar();
-    renderKillchain();
-    toast("Target " + target + " ready.", "success");
+    renderShellChrome(); renderSidebar(); renderKillchain();
+
+    // Wire the declared scope into the backend so scope_guard enforces it.
+    const ok = await pushScope(effIn, outScope);
+    toast(ok ? ("Target " + target + " loaded · scope enforced.")
+             : ("Target " + target + " loaded · backend scope wiring failed."),
+          ok ? "success" : "error");
     navigateTo("scope");
 }
 
 function clearIntake() {
-    state.target = null; state.workspace = null; state.vaultPath = null;
+    state.target = null; state.program = null; state.workspace = null; state.vaultPath = null;
+    state.scope = { program: "", platform: "", inScope: [], outScope: [], active: false };
+    state.surfaceSubs = null;
     state.intakeDraft = { target: "", program: "", workspace: "", vault: "", scope: "", oos: "" };
-    LS.set("target", null); LS.set("workspace", null); LS.set("vaultPath", null);
+    LS.set("target", null); LS.set("program", null); LS.set("workspace", null);
+    LS.set("vaultPath", null); LS.set("scope", null);
     consoleLog("log", "target cleared");
     renderShellChrome(); renderSidebar(); renderKillchain(); renderWorkspace();
+}
+
+// ── Scope wiring (backend-enforced) ──────────────────────────────
+async function pushScope(inScope, outScope) {
+    if (!state.target) return false;
+    const r = await api("POST", "/api/scope", {
+        target:    state.target,
+        program:   state.program || "",
+        workspace: state.workspace || state.target,
+        platform:  (state.scope && state.scope.platform) || "",
+        in_scope:  inScope,
+        out_of_scope: outScope,
+    });
+    if (r.ok && r.data && r.data.success && r.data.data && r.data.data.program) {
+        const p = r.data.data.program;
+        state.scope = {
+            program:  p.name || state.program || "",
+            platform: p.platform || "",
+            inScope:  (p.in_scope || []).map(e => e.value || e),
+            outScope: (p.out_of_scope || []).map(e => e.value || e),
+            active:   true,
+            programPath: r.data.data.active_program || "",
+        };
+        LS.set("scope", state.scope);
+        consoleLog("success", "scope enforced: " + state.scope.inScope.length +
+                              " in / " + state.scope.outScope.length + " out");
+        return true;
+    }
+    consoleLog("error", "scope wiring failed: " + ((r.data && r.data.message) || r.status));
+    return false;
+}
+
+async function saveScope() {
+    if (!state.target) { toast("Load a target first.", "error"); return; }
+    const inScope  = parseScopeLines(val("scope-in"));
+    const outScope = parseScopeLines(val("scope-out"));
+    const ok = await pushScope(inScope, outScope);
+    toast(ok ? "Scope saved & enforced." : "Scope save failed.", ok ? "success" : "error");
+    renderWorkspace();
+}
+
+async function ensureScope() {
+    const r = await api("GET", "/api/scope");
+    if (!r.ok || !r.data) return;
+    const d = r.data.data || r.data;
+    const prog = d && d.program;
+    if (!prog || !prog.in_scope) return;
+    // Only adopt the backend program if it authorizes the active target — avoids
+    // surfacing a stale engagement from a previous session.
+    const inVals = (prog.in_scope || []).map(e => (e.value || e || "").toString());
+    const matches = !state.target || inVals.some(v =>
+        v === state.target || v === "*." + state.target || v.endsWith("." + state.target));
+    if (!matches) return;
+    state.scope = {
+        program:  prog.name || "",
+        platform: prog.platform || "",
+        inScope:  inVals,
+        outScope: (prog.out_of_scope || []).map(e => (e.value || e || "").toString()),
+        active:   true,
+        programPath: d.active_program || "",
+    };
+    LS.set("scope", state.scope);
+    if (currentRoute() === "scope") renderWorkspace();
+}
+
+// ── Notes (workspace-scoped, local) ──────────────────────────────
+function saveNotes() {
+    const el = document.getElementById("notes-area"); if (!el) return;
+    LS.set(wsKey("notes"), el.value);
+    consoleLog("success", "notes saved"); toast("Notes saved.", "success");
+}
+function copyNotes() {
+    const el = document.getElementById("notes-area");
+    copyToClipboard(el ? el.value : (LS.get(wsKey("notes"), "") || ""));
+}
+function clearNotes() {
+    LS.set(wsKey("notes"), "");
+    renderWorkspace(); toast("Notes cleared.", "info");
 }
 
 function setRisk(mode) {
@@ -1292,10 +1764,8 @@ async function submitJob() {
 }
 
 // ── Copy / clipboard ─────────────────────────────────────────────
-function copyForge(id) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    const txt = el.textContent;
+function copyToClipboard(txt) {
+    if (!txt) { toast("Nothing to copy.", "error"); return; }
     if (navigator.clipboard) {
         navigator.clipboard.writeText(txt).then(
             () => { consoleLog("success", "command copied"); toast("Copied to clipboard.", "success"); },
@@ -1393,17 +1863,31 @@ document.addEventListener("input", (e) => {
     if (key) state.intakeDraft[key] = e.target.value;
 });
 
+// Dismiss the command autocomplete when clicking outside it / its field.
+document.addEventListener("mousedown", (e) => {
+    if (!AC.open) return;
+    const t = e.target;
+    if (t && t.closest && (t.closest(".cmd-suggest") || t.closest(".forge-cmd-edit"))) return;
+    closeAC();
+});
+
 // ── Public API exposed on window.ReconForge ──────────────────────
 window.ReconForge = {
     login, logout,
     go: navigateTo,
     saveIntake, clearIntake, setRisk, setPlatform, submitJob,
+    saveScope, refreshSurface,
     enrollMonitor, toggleMonitor, removeMonitor,
     saveOpsec,
     openPalette, closePalette, executePalette,
     toggleConsole, clearConsole,
     toggleGuide,
-    copyForge,
+    // command builder
+    copyCmd, saveCmdToWorkspace, addCmdToNotes, resetCmd,
+    onCmdInput, onCmdKey, onCmdBlur, acPick,
+    copySaved, removeSaved,
+    // notes
+    saveNotes, copyNotes, clearNotes,
     toast,
 };
 

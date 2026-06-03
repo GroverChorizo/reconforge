@@ -983,3 +983,139 @@ kbd {
 .spacer-md    { height: 16px; }
 
 /* ── login: keep old form styles out ────────────────────────── */
+
+/* ════════════════════════════════════════════════════════════════
+   Command builder — editable command + inline autocomplete
+   ════════════════════════════════════════════════════════════════ */
+.forge-edited {
+  font-family: var(--font-mono); font-size: 8px;
+  letter-spacing: 1px; text-transform: uppercase;
+  color: var(--status-processing);
+  border: 1px solid var(--status-processing);
+  border-radius: 2px; padding: 1px 5px; margin-left: 6px;
+  vertical-align: middle;
+}
+.forge-cmd-wrap {
+  display: flex; align-items: flex-start; gap: 6px;
+  padding: 10px 12px;
+  background: var(--bg-input);
+  border-top: 1px dashed var(--border-muted);
+  border-bottom: 1px dashed var(--border-muted);
+}
+.forge-cmd-prompt {
+  color: var(--accent-purple); font-weight: 600;
+  font-family: var(--font-mono); font-size: 12.5px;
+  line-height: 1.5; padding-top: 7px;
+}
+.forge-cmd-edit {
+  flex: 1; width: 100%;
+  font-family: var(--font-mono); font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--status-success);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  resize: vertical;
+  white-space: pre-wrap; word-break: break-all;
+}
+.forge-cmd-edit:focus {
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 2px var(--accent-purple-soft);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.cmd-suggest {
+  position: fixed; z-index: 1200;
+  max-height: 256px; overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+}
+.cmd-suggest-item {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+  padding: 6px 9px; border-radius: 2px; cursor: pointer;
+}
+.cmd-suggest-item.active,
+.cmd-suggest-item:hover { background: var(--accent-purple-soft); }
+.cmd-suggest-text { color: var(--text-primary); font-size: 12px; }
+.cmd-suggest-item.active .cmd-suggest-text { color: var(--accent-purple-hi); }
+.cmd-suggest-hint {
+  color: var(--text-muted); font-size: 10px;
+  white-space: nowrap; flex-shrink: 0;
+}
+
+/* ── saved commands list ────────────────────────────────────── */
+.saved-cmds { list-style: none; margin: 0; padding: 0; }
+.saved-cmds li { padding: 8px 0; border-bottom: 1px solid var(--border-soft); }
+.saved-cmds li:last-child { border-bottom: 0; }
+.saved-cmd-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 4px;
+}
+.saved-cmd-label {
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.saved-cmd-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.saved-cmd-text {
+  display: block; font-size: 11.5px; color: var(--status-success);
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  white-space: pre-wrap; word-break: break-all;
+}
+
+/* ── scope list + asset-map actions ─────────────────────────── */
+.scope-list { list-style: none; padding-left: 14px; margin: 4px 0 8px; }
+.scope-list li { padding: 1px 0; }
+.surface-actions {
+  display: flex; gap: 6px; margin-top: 12px;
+  padding-top: 10px; border-top: 1px solid var(--border-soft);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Worker cards
+   ════════════════════════════════════════════════════════════════ */
+.worker-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+.worker-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-muted);
+  border-left: 3px solid var(--border-muted);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.worker-card[data-state="busy"]    { border-left-color: var(--status-processing); }
+.worker-card[data-state="waiting"] { border-left-color: var(--status-error); }
+.worker-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.worker-name { font-size: 12px; color: var(--text-primary); }
+.worker-pill {
+  font-family: var(--font-mono); font-size: 8px;
+  letter-spacing: 1.5px; padding: 2px 6px; border-radius: 2px;
+  border: 1px solid var(--border-muted); color: var(--text-muted);
+}
+.worker-pill[data-state="busy"]    { color: var(--status-processing); border-color: var(--status-processing); }
+.worker-pill[data-state="waiting"] { color: var(--status-error); border-color: var(--status-error); }
+.worker-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 6px; margin-bottom: 10px;
+}
+.worker-stats > div { display: flex; flex-direction: column; align-items: center; }
+.worker-stat-val { font-family: var(--font-mono); font-size: 18px; color: var(--text-primary); }
+.worker-stat-lbl {
+  font-size: 8px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.worker-bar { height: 4px; border-radius: 2px; background: var(--bg-input); overflow: hidden; }
+.worker-bar-fill { height: 100%; background: var(--status-processing); transition: width 0.4s ease; }

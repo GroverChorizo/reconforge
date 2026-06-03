@@ -1120,6 +1120,75 @@ def _program_for(domain: str) -> Dict:
 def _slugify_domain(domain: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (domain or "").lower()).strip("-") or "unknown"
 
+def _scope_entry(value: str) -> Optional[Dict[str, str]]:
+    """Normalize one scope line into a {type, value} entry. Strips scheme/path
+    when a URL is pasted (but leaves CIDRs intact) and derives the entry type
+    the same way scope_guard does for bare strings — so what we persist is
+    exactly what the guard will later enforce."""
+    v = (value or "").strip().lower()
+    if not v or v.startswith("#"):
+        return None
+    if "/" in v and scope_guard._looks_like_cidr(v):
+        pass  # CIDR — keep the mask
+    else:
+        if "://" in v:
+            v = v.split("://", 1)[1]
+        v = v.split("/")[0]
+    v = v.strip().rstrip(".")
+    if not v:
+        return None
+    return {"type": scope_guard._entry_type(v), "value": v}
+
+def _normalize_scope_entries(raw: Any) -> List[Dict[str, str]]:
+    """Accept either a newline/comma string or a list (of strings or
+    {value:...} dicts) and return a deduped list of {type, value} entries."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        parts: List[str] = re.split(r"[\s,]+", raw)
+    elif isinstance(raw, list):
+        parts = [str(it.get("value", "")) if isinstance(it, dict) else str(it)
+                 for it in raw]
+    else:
+        return []
+    out: List[Dict[str, str]] = []
+    seen: set = set()
+    for p in parts:
+        entry = _scope_entry(p)
+        if entry and entry["value"] not in seen:
+            seen.add(entry["value"])
+            out.append(entry)
+    return out
+
+def _save_scope_program(target: str, program_name: str, workspace: str,
+                        platform: str, handle: str,
+                        in_scope: Any, out_of_scope: Any) -> Tuple[Dict[str, Any], str]:
+    """Write scopes/<slug>.json and make it the active program so scope_guard
+    enforces exactly what the operator declared. Returns (program, rel_path)."""
+    in_entries  = _normalize_scope_entries(in_scope)
+    out_entries = _normalize_scope_entries(out_of_scope)
+    # Bug-bounty default: an empty in-scope means apex + wildcard, matching the
+    # surface the UI implied before scope was wired. Operator can edit it.
+    if not in_entries and target:
+        in_entries = [{"type": "domain", "value": target},
+                      {"type": "wildcard", "value": "*." + target}]
+    prog: Dict[str, Any] = {
+        "name": program_name or target,
+        "platform": (platform or "").lower(),
+        "platform_handle": handle or "",
+        "workspace": workspace or target,
+        "in_scope": in_entries,
+        "out_of_scope": out_entries,
+    }
+    slug = _slugify_domain(workspace or target)
+    rel  = "scopes/" + slug + ".json"
+    full = os.path.join(_BASE, "scopes", slug + ".json")
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "w", encoding="utf-8") as f:
+        json.dump(prog, f, indent=2)
+    set_config("active_program", rel)
+    return prog, rel
+
 def _emit_contract(job: Job, status: str):
     """Emit the vault contract dir for a completed job. Returns the run dir
     Path (or None). Mirrors the ctx/result shape in __main__.py:_cmd_contract."""
@@ -2362,6 +2431,9 @@ class ReconHandler(BaseHTTPRequestHandler):
         m = re.match(r"^/api/reports/([^/]+)$", path)
         if m:
             return self._api_report(urllib.parse.unquote(m.group(1)), qs)
+        # scope (active program)
+        if path == "/api/scope":
+            return self._api_scope_get()
         # config / history / logs
         if path == "/api/config":
             return self._api_config_get()
@@ -2408,6 +2480,8 @@ class ReconHandler(BaseHTTPRequestHandler):
             return self._api_logout(session)
         if path == "/api/jobs":
             return self._api_jobs_create(session)
+        if path == "/api/scope":
+            return self._api_scope_save(session)
         m = re.match(r"^/api/jobs/([a-f0-9]+)/(pause|resume|cancel|skip-step)$", path)
         if m:
             return self._api_job_action(m.group(1), m.group(2), session)
@@ -2791,6 +2865,40 @@ class ReconHandler(BaseHTTPRequestHandler):
         init_tool_gates()
         _sync_opsec_proxy()
         self._ok(msg="Config saved")
+
+    # ── API: scope (active program) ──────────────────────────
+    def _api_scope_get(self) -> None:
+        """Return the currently-enforced program (or null) so the Scope page
+        can render exactly what scope_guard will gate on."""
+        prog = _active_program()
+        self._ok({"program": prog, "active_program": get_config("active_program")})
+
+    def _api_scope_save(self, session: Dict) -> None:
+        """Persist the operator's declared scope to scopes/<slug>.json and make
+        it the active program. After this returns, scope_guard enforces these
+        exact in/out-of-scope rules on every tool dispatch + job submission."""
+        body = self._body_json() or {}
+        target = (body.get("target") or "").strip().lower()
+        if not target:
+            return self._err("target is required")
+        prog, rel = _save_scope_program(
+            target=target,
+            program_name=(body.get("program") or "").strip(),
+            workspace=(body.get("workspace") or "").strip(),
+            platform=(body.get("platform") or "").strip(),
+            handle=(body.get("platform_handle") or "").strip(),
+            in_scope=body.get("in_scope"),
+            out_of_scope=body.get("out_of_scope"),
+        )
+        # Register the target so it surfaces in /api/targets + the asset map.
+        db_exec("INSERT OR IGNORE INTO targets(domain) VALUES(?)", (target,))
+        add_history(target, "scope",
+                    f"scope set: {len(prog['in_scope'])} in / "
+                    f"{len(prog['out_of_scope'])} out ({session.get('username','?')})")
+        emit(f"active program set to {rel} "
+             f"({len(prog['in_scope'])} in-scope, {len(prog['out_of_scope'])} out)",
+             "INFO", "scope_guard")
+        self._ok({"program": prog, "active_program": rel}, "Scope saved & enforced")
 
     # ── API: history / logs ──────────────────────────────────
     def _api_history(self, qs: Dict) -> None:
