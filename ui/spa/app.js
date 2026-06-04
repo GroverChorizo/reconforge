@@ -50,6 +50,10 @@ const state = {
     // status:  "idle" | "loading" | "ready" | "noprogram" | "error"
     findings:       { slug: null, board: null, detail: null, detailId: null,
                       loadingDetail: null, status: "idle", error: null },
+    // ── [agent: report] ── Report Export workspace (per-platform draft +
+    // CVSS calc + quality gate). reportDraft holds the last generated markdown
+    // so a re-render (e.g. switching platform pill) repaints the textarea.
+    report:         { platform: "", draft: "", gate: null, gateNote: "" },
 };
 
 const LS = {
@@ -1163,44 +1167,497 @@ PAGES.timeline = function () {
     `;
 };
 
+// ── [agent: report] ── Report Export workspace ───────────────────
 PAGES.export = function () {
+    const rep      = state.report || { platform: "", draft: "" };
+    const apex     = state.target || "";
+    const firstAsset = reportInScopeAsset();
+    const draft    = rep.draft || "";
     return `
-      ${renderWorkspaceHead("Report Export", "Report", "Bundle the run into a submission-ready report.")}
+      ${renderWorkspaceHead("Report Export", "Report", "Score, draft, and quality-gate a submission-ready report.")}
       <div class="workspace-cols">
         <div>
+          ${panel("CVSS 4.0 calculator", `
+            <div class="form-grid">
+              <div class="full">
+                <label class="form-label">CVSS 4.0 vector</label>
+                <input id="export-cvss" type="text" class="mono"
+                  value="${escapeAttr(reportDefaultVector())}"
+                  oninput="ReconForge.scoreCvss()"
+                  placeholder="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N"
+                  spellcheck="false" autocomplete="off">
+              </div>
+            </div>
+            <div class="spacer-sm"></div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button class="btn btn-sm btn-primary" onclick="ReconForge.scoreCvss()">▸ Score</button>
+              <div id="cvss-result" class="cvss-result">${renderCvssResult(reportDefaultVector())}</div>
+            </div>
+            <div class="form-help">Base + Threat (E) metrics, scored client-side with the same approximation as <span class="mono">core/cvss.py</span> (±0.4 of FIRST). Required: AV AC AT PR UI VC VI VA SC SI SA; optional E.</div>
+          `)}
           ${panel("Per-platform draft", `
             <div class="form-grid">
               <div class="full">
                 <label class="form-label">Platform</label>
                 <div class="radio-row">
                   ${["hackerone","intigriti","bugcrowd","yeswehack","synack"].map(p =>
-                    `<label class="radio-pill"><input type="radio" name="platform" value="${p}" style="display:none;" onchange="ReconForge.setPlatform('${p}')">${p}</label>`
+                    `<label class="radio-pill ${rep.platform === p ? "selected" : ""}" onclick="ReconForge.setPlatform('${p}')">${p}</label>`
                   ).join("")}
                 </div>
               </div>
               <div>
                 <label class="form-label">Vuln class</label>
-                <input id="export-class" type="text" placeholder="ssrf, xss, idor…">
+                <input id="export-class" type="text" value="${escapeAttr(rep.vulnClass || "")}" placeholder="ssrf, xss, idor…" spellcheck="false">
               </div>
               <div>
-                <label class="form-label">CVSS vector</label>
-                <input id="export-cvss" type="text" placeholder="AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N" class="mono">
+                <label class="form-label">Affected asset (in-scope)</label>
+                <input id="export-asset" type="text" value="${escapeAttr(rep.asset != null ? rep.asset : firstAsset)}" placeholder="api.example.com" spellcheck="false">
               </div>
             </div>
             <div class="spacer-md"></div>
-            <div style="display:flex; gap:8px;">
-              <button class="btn btn-primary" onclick="ReconForge.toast('Draft generated via scripts/report/draft-report.sh', 'success')">▸ Generate draft</button>
-              <button class="btn btn-ghost" onclick="ReconForge.toast('Evidence pack queued.', 'success')">Pack evidence</button>
-              <button class="btn btn-ghost" onclick="ReconForge.toast('Dup check queued.', 'info')">Dup check</button>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button class="btn btn-primary" onclick="ReconForge.generateDraft()" ${apex ? "" : "disabled"}>▸ Generate draft</button>
+              <button class="btn btn-ghost" onclick="ReconForge.copyDraft()" ${draft ? "" : "disabled"}>Copy draft</button>
             </div>
+            ${apex ? "" : `<div class="form-help">Load a target on <span class="mono">Target → Intake</span> first to pre-fill the scaffold.</div>`}
+            <div class="spacer-sm"></div>
+            <textarea id="export-draft" class="mono report-draft" spellcheck="false"
+              placeholder="Select a platform and click Generate draft — a markdown scaffold pre-filled with your target, in-scope asset, vuln class, and the CVSS vector + score appears here.">${escapeHTML(draft)}</textarea>
           `)}
+          ${state.guideMode ? guidePanel("Report doctrine", "Title must name vuln class + asset + impact. Every repro step numbered, one instruction per line. CVSS score provided AND justified. Impact = real-world consequence, never theoretical. Triagers downgrade padded severity — understated honest beats inflated.") : ""}
         </div>
         <div>
+          ${renderQualityGatePanel()}
           ${renderVaultPanel()}
         </div>
       </div>
     `;
 };
+
+// In-scope asset to pre-fill the report (first concrete host, else apex).
+function reportInScopeAsset() {
+    const sc = state.scope || {};
+    const apex = state.target || "";
+    const concrete = (sc.inScope || []).find(h =>
+        h && !h.startsWith("*.") && h.indexOf("/") === -1);
+    return concrete || apex || "";
+}
+
+function reportDefaultVector() {
+    // Reuse whatever is in the live field on re-render, else a sane CVSS 4.0 base.
+    const el = (typeof document !== "undefined") && document.getElementById("export-cvss");
+    if (el && el.value) return el.value;
+    return (state.report && state.report.vector) ||
+           "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N";
+}
+
+// ── CVSS 4.0 scoring (ported from core/cvss.py — keep math in lockstep) ──
+const CVSS_AV = { N: 1.00, A: 0.62, L: 0.55, P: 0.20 };
+const CVSS_AC = { L: 1.00, H: 0.77 };
+const CVSS_AT = { N: 1.00, P: 0.70 };
+const CVSS_PR = { N: 1.00, L: 0.68, H: 0.50 };
+const CVSS_UI = { N: 1.00, P: 0.85, A: 0.62 };
+const CVSS_IMPACT = { H: 1.00, L: 0.40, N: 0.00 };
+const CVSS_E = { A: 1.00, P: 0.95, U: 0.85, X: 1.00 };
+const CVSS_REQUIRED = ["AV", "AC", "AT", "PR", "UI", "VC", "VI", "VA", "SC", "SI", "SA"];
+const CVSS_VALID = {
+    AV: CVSS_AV, AC: CVSS_AC, AT: CVSS_AT, PR: CVSS_PR, UI: CVSS_UI,
+    VC: CVSS_IMPACT, VI: CVSS_IMPACT, VA: CVSS_IMPACT,
+    SC: CVSS_IMPACT, SI: CVSS_IMPACT, SA: CVSS_IMPACT, E: CVSS_E,
+};
+
+// Parse a CVSS:4.0 vector. Returns { metrics } or { error }.
+function cvss40Parse(vector) {
+    if (typeof vector !== "string") return { error: "vector must be a string" };
+    const v = vector.trim();
+    const m = /^CVSS:4\.0((?:\/[A-Z]+:[A-Z])+)$/.exec(v);
+    if (!m) {
+        if (/^(CVSS:3\.[01]|AV:)/.test(v) && !/^CVSS:4\.0/.test(v)) {
+            return { error: "only CVSS:4.0 vectors are scored (matches core/cvss.py)" };
+        }
+        return { error: "not a CVSS:4.0 vector" };
+    }
+    const metrics = {};
+    for (const chunk of m[1].split("/")) {
+        if (!chunk) continue;
+        const [k, val] = chunk.split(":");
+        if (k in metrics) return { error: "duplicate metric " + k };
+        if (!(k in CVSS_VALID)) return { error: "unknown metric " + k };
+        if (!(val in CVSS_VALID[k])) return { error: "invalid value for " + k + ": " + val };
+        metrics[k] = val;
+    }
+    const missing = CVSS_REQUIRED.filter(k => !(k in metrics));
+    if (missing.length) return { error: "missing required metrics: " + missing.join(", ") };
+    if (!("E" in metrics)) metrics.E = "X";
+    return { metrics };
+}
+
+function cvss40Score(vector) {
+    const p = cvss40Parse(vector);
+    if (p.error) return { error: p.error };
+    const m = p.metrics;
+    const exploitability =
+        CVSS_AV[m.AV] * CVSS_AC[m.AC] * CVSS_AT[m.AT] * CVSS_PR[m.PR] * CVSS_UI[m.UI];
+    const vc = CVSS_IMPACT[m.VC], vi = CVSS_IMPACT[m.VI], va = CVSS_IMPACT[m.VA];
+    const sc = CVSS_IMPACT[m.SC], si = CVSS_IMPACT[m.SI], sa = CVSS_IMPACT[m.SA];
+    const vulnMax = Math.max(vc, vi, va);
+    const vulnBonus = 0.05 * [vc, vi, va].filter(x => x >= CVSS_IMPACT.H && x !== vulnMax).length;
+    const vulnImpact = Math.min(1.0, vulnMax + vulnBonus);
+    const subMax = Math.max(sc, si, sa);
+    const subContrib = 0.5 * subMax;
+    const impact = Math.max(vulnImpact, subContrib);
+    let base = 10.0 * exploitability * impact;
+    base *= CVSS_E[m.E];
+    const scoreVal = Math.round(Math.min(10.0, Math.max(0.0, base)) * 10) / 10;
+    return { score: scoreVal, severity: cvss40Severity(scoreVal) };
+}
+
+function cvss40Severity(s) {
+    if (s <= 0.0) return "None";
+    if (s < 4.0)  return "Low";
+    if (s < 7.0)  return "Medium";
+    if (s < 9.0)  return "High";
+    return "Critical";
+}
+
+// Map severity → an existing badge variant for visual consistency.
+function cvssSeverityBadge(sev) {
+    const cls = { Critical: "error", High: "error", Medium: "processing",
+                  Low: "muted", None: "muted" }[sev] || "muted";
+    return `<span class="badge badge-${cls}">${escapeHTML(sev)}</span>`;
+}
+
+function renderCvssResult(vector) {
+    const r = cvss40Score(vector);
+    if (r.error) {
+        return `<span class="cvss-score-num text-mute">—</span> <span class="text-error" style="font-size:11px;">${escapeHTML(r.error)}</span>`;
+    }
+    return `<span class="cvss-score-num">${r.score.toFixed(1)}</span> ${cvssSeverityBadge(r.severity)}`;
+}
+
+// Score handler — reads the field, writes the result element by id. No full
+// re-render, so the operator can keep typing the vector mid-score.
+function scoreCvss() {
+    const el  = document.getElementById("export-cvss");
+    const out = document.getElementById("cvss-result");
+    if (!el || !out) return;
+    if (state.report) state.report.vector = el.value;
+    out.innerHTML = renderCvssResult(el.value);
+}
+
+function setPlatform(p) {
+    if (!["hackerone","intigriti","bugcrowd","yeswehack","synack"].includes(p)) return;
+    if (!state.report) state.report = { platform: "", draft: "" };
+    // Capture in-progress field values before the re-render repaints them.
+    const vc = document.getElementById("export-class");
+    const vct = document.getElementById("export-cvss");
+    const as = document.getElementById("export-asset");
+    if (vc)  state.report.vulnClass = vc.value;
+    if (vct) state.report.vector = vct.value;
+    if (as)  state.report.asset = as.value;
+    state.report.platform = p;
+    consoleLog("select", "report platform: " + p);
+    if (currentRoute() === "export") renderWorkspace();
+}
+
+// Build a platform-tailored markdown scaffold (Agent 6 — Reporter formats).
+function buildReportDraft(platform, ctx) {
+    const { target, asset, vulnClass, vector, score, severity } = ctx;
+    const klass = vulnClass || "[vuln class]";
+    const klassTitle = klass.toUpperCase();
+    const assetLine = asset || target || "[asset]";
+    const sevLabel  = severity || "—";
+    const scoreLabel = (score == null) ? "X.X" : score.toFixed(1);
+    const vecLine = vector || "CVSS:4.0/…";
+    const title = `${klassTitle} in ${assetLine} allows [impact]`;
+
+    if (platform === "hackerone") {
+        return `Title: ${title}
+Severity: ${sevLabel} — CVSS 4.0 score: ${scoreLabel}
+Weakness: CWE-XXX ([name])
+Asset type: ${assetLine}
+
+## Summary
+[2-3 sentence executive summary. What is it (${klass}), where is it (${assetLine}), what can an attacker do.]
+
+## Steps to Reproduce
+1. [Step]
+2. [Step]
+3. [Step]
+
+## Proof of Concept
+\`\`\`
+[Working payload / request / response]
+\`\`\`
+
+## Impact
+[Specific data/access/action an attacker gains on ${target || assetLine}. Business risk.]
+
+## CVSS Justification
+${vecLine}
+Score: ${scoreLabel} (${sevLabel}). [One sentence justifying each metric choice.]
+
+## Remediation
+[Specific fix recommendation]
+`;
+    }
+
+    if (platform === "intigriti") {
+        return `## Executive Summary
+[1 paragraph. Asset ${assetLine}, class ${klass}, severity ${sevLabel}, business impact.]
+
+## Technical Details
+[Full technical explanation of the root cause.]
+
+### Reproduction Steps
+1. [Step]
+2. [Step]
+3. [Step]
+
+### Proof of Concept
+\`\`\`
+[payload or request — include X-Intigriti-Username: grover on every target request]
+\`\`\`
+
+## CVSS Score
+${vecLine}
+Numeric: ${scoreLabel} (${sevLabel}) — [per-metric justification].
+
+## Impact
+[What an attacker can do. Data exposure, privilege gained, blast radius.]
+
+## Remediation
+[Specific actionable fix.]
+
+## Evidence
+[Inline screenshots with captions. Raw request/response pairs.]
+`;
+    }
+
+    if (platform === "bugcrowd") {
+        return `VRT category: [select required VRT category — determines base severity]
+Title: [VRT category] — ${klassTitle} in ${assetLine}
+
+## Description
+[${klass} on ${assetLine}. Root cause + what an attacker achieves. Limit 25,000 chars.]
+
+## Steps to Reproduce
+1. [Step]
+2. [Step]
+3. [Step]
+
+## Proof of Concept
+\`\`\`
+[Working payload / request / response]
+\`\`\`
+
+## Impact
+[Specific consequence on ${target || assetLine}. Business risk.]
+
+## CVSS
+${vecLine}
+Score: ${scoreLabel} (${sevLabel}). [Justify — Bugcrowd overrides researcher severity; defend yours.]
+
+## Remediation
+[Specific fix.]
+
+> Note: no edits after submission. Screenshot minimum; video strongly preferred.
+`;
+    }
+
+    if (platform === "yeswehack") {
+        return `Title: ${title}
+
+## Summary
+[1 paragraph. ${klass} on ${assetLine}.]
+
+## OWASP Category
+[Map to OWASP category, e.g. A01:2021 — Broken Access Control]
+
+## Technical Details
+[Root cause explanation.]
+
+## Steps to Reproduce
+1. [Step]
+2. [Step]
+3. [Step]
+
+## Proof of Concept
+\`\`\`
+[payload or request]
+\`\`\`
+
+## Business Impact
+[Non-technical narrative: explain to a non-technical reader what the business risk is on ${target || assetLine}.]
+
+## CVSS Score
+${vecLine}
+Score: ${scoreLabel} (${sevLabel}).
+
+## Remediation
+[Specific actionable fix.]
+
+> Check the program brief for country/region restrictions before testing.
+`;
+    }
+
+    if (platform === "synack") {
+        return `Title: ${title}
+Severity: ${sevLabel} — CVSS 4.0: ${scoreLabel}
+Vector: ${vecLine}
+Affected asset: ${assetLine}
+
+## Vulnerability Description
+[${klass} on ${assetLine}. Root cause.]
+
+## Steps to Reproduce
+1. [Step — attach sequential screenshot #1]
+2. [Step — attach sequential screenshot #2]
+3. [Step — attach sequential screenshot #3]
+
+## Proof of Concept
+\`\`\`
+[payload or request]
+\`\`\`
+
+## Impact
+[What an attacker gains on ${target || assetLine}.]
+
+## Remediation
+[Specific fix.]
+
+> Invite-only: verify program enrollment. Follow the program template exactly;
+> evidence chain = sequential screenshots numbered to match each PoC step.
+`;
+    }
+    return "";
+}
+
+function generateDraft() {
+    if (!state.report) state.report = { platform: "", draft: "" };
+    const platform = state.report.platform;
+    if (!platform) { toast("Pick a platform first.", "error"); return; }
+    const vulnClass = (val("export-class") || "").trim();
+    const asset     = (val("export-asset") || "").trim() || reportInScopeAsset();
+    const vector    = (val("export-cvss") || "").trim();
+    const scored    = cvss40Score(vector);
+    state.report.vulnClass = vulnClass;
+    state.report.vector    = vector;
+    state.report.asset     = asset;
+    const ctx = {
+        target:    state.target || "",
+        asset, vulnClass, vector,
+        score:     scored.error ? null : scored.score,
+        severity:  scored.error ? null : scored.severity,
+    };
+    state.report.draft = buildReportDraft(platform, ctx);
+    consoleLog("success", "report draft generated: " + platform);
+    toast("Draft generated for " + platform + ".", "success");
+    renderWorkspace();
+}
+
+function copyDraft() {
+    const el = document.getElementById("export-draft");
+    const txt = el ? el.value : (state.report && state.report.draft) || "";
+    copyToClipboard(txt);
+}
+
+// ── Quality gate ─────────────────────────────────────────────────
+// The 10 deterministic checks (mirrors core/report_gate.py) — shown as a
+// static description when no draft id is supplied.
+const QUALITY_GATE_CHECKS = [
+    ["Title present + descriptive", "≥12 chars; names vuln class + asset + impact"],
+    ["Summary present",            "a Summary / Executive Summary section with content"],
+    ["Affected asset present",     "an Affected Asset / Endpoint section"],
+    ["Reproduction steps present", "a Steps to Reproduce / Reproduction section"],
+    ["Impact statement present",   "an Impact section with content"],
+    ["Evidence captured",          "≥1 observed or verified evidence row on the finding"],
+    ["Remediation suggested",      "a Remediation / Fix section"],
+    ["Scope verified",             "the finding's domain is still in program scope"],
+    ["No secrets in body",         "regex sweep for keys, JWTs, creds (no hits)"],
+    ["Operator reviewed",          "the manual checklist tab was viewed + acknowledged"],
+];
+
+function renderQualityGatePanel() {
+    const rep = state.report || {};
+    const gate = rep.gate;
+    let body;
+    if (gate && Array.isArray(gate.checks)) {
+        const pct = gate.total ? Math.round((gate.passed_count / gate.total) * 100) : 0;
+        const head = `
+          <div class="gate-summary">
+            <span class="badge badge-${gate.passed ? "success" : "error"}">${gate.passed ? "READY" : "BLOCKED"}</span>
+            <span class="mono">${gate.passed_count}/${gate.total} checks</span>
+            <div class="gate-bar"><div class="gate-bar-fill" style="width:${pct}%"></div></div>
+          </div>`;
+        const rows = gate.checks.map(c => `
+          <li class="gate-check ${c.passed ? "pass" : "fail"}">
+            <span class="gate-mark">${c.passed ? "✓" : "✕"}</span>
+            <span class="gate-label">${escapeHTML(c.label)}</span>
+            ${!c.passed && c.reason ? `<span class="gate-reason">${escapeHTML(c.reason)}</span>` : ""}
+          </li>`).join("");
+        body = head + `<ul class="gate-list">${rows}</ul>`;
+    } else {
+        const rows = QUALITY_GATE_CHECKS.map(([label, desc]) => `
+          <li class="gate-check">
+            <span class="gate-mark">•</span>
+            <span class="gate-label">${escapeHTML(label)}</span>
+            <span class="gate-reason">${escapeHTML(desc)}</span>
+          </li>`).join("");
+        const note = rep.gateNote
+            ? `<div class="form-help text-error">${escapeHTML(rep.gateNote)}</div>`
+            : `<div class="form-help">No draft loaded. Enter a submission draft id to run the live gate, or review the 10 checks below (from <span class="mono">core/report_gate.py</span>).</div>`;
+        body = `<ul class="gate-list">${rows}</ul>` + note;
+    }
+    return panel("Submission quality gate", `
+      ${body}
+      <div class="spacer-sm"></div>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <input id="gate-draft-id" type="number" min="1" placeholder="draft id" style="width:110px;"
+          value="${escapeAttr(state.report && state.report.gateId != null ? String(state.report.gateId) : "")}">
+        <label class="radio-pill ${state.report && state.report.gateReviewed ? "selected" : ""}" style="font-size:10px;">
+          <input id="gate-reviewed" type="checkbox" ${state.report && state.report.gateReviewed ? "checked" : ""} style="margin-right:6px;">reviewed
+        </label>
+        <button class="btn btn-sm btn-primary" onclick="ReconForge.runQualityGate()">▸ Run gate</button>
+      </div>
+    `);
+}
+
+async function runQualityGate() {
+    const idEl = document.getElementById("gate-draft-id");
+    const revEl = document.getElementById("gate-reviewed");
+    const raw = (idEl && idEl.value || "").trim();
+    if (!state.report) state.report = { platform: "", draft: "" };
+    state.report.gateReviewed = !!(revEl && revEl.checked);
+    const id = parseInt(raw, 10);
+    if (!raw || isNaN(id) || id < 1) {
+        state.report.gate = null;
+        state.report.gateNote = "Enter a numeric submission draft id to run the live gate.";
+        renderWorkspace();
+        return;
+    }
+    state.report.gateId = id;
+    const reviewed = state.report.gateReviewed ? "1" : "0";
+    const r = await api("GET", "/api/v2/submissions/" + id + "/quality_gate?reviewed=" + reviewed);
+    if (r.ok && r.data) {
+        const gate = r.data.data || r.data;
+        if (gate && Array.isArray(gate.checks)) {
+            state.report.gate = gate;
+            state.report.gateNote = "";
+            consoleLog("success", "quality gate: " + gate.passed_count + "/" + gate.total + " (draft " + id + ")");
+        } else {
+            state.report.gate = null;
+            state.report.gateNote = "Unexpected gate response.";
+        }
+    } else {
+        state.report.gate = null;
+        state.report.gateNote = (r.status === 404)
+            ? ("No submission draft #" + id + " — drafts come from the agent layer / report scripts.")
+            : ("Gate request failed (HTTP " + r.status + ").");
+        consoleLog("error", "quality gate failed: " + state.report.gateNote);
+    }
+    renderWorkspace();
+}
 
 PAGES.vault = function () {
     return `
@@ -2601,11 +3058,6 @@ function setRisk(mode) {
     renderWorkspace();
 }
 
-function setPlatform(p) {
-    consoleLog("select", "platform: " + p);
-    toast("Platform " + p + " selected for export.", "info");
-}
-
 // ── Continuous monitoring (recon schedule) ───────────────────────
 async function refreshState() {
     const r = await api("GET", "/api/state");
@@ -2778,6 +3230,8 @@ window.ReconForge = {
     go: navigateTo,
     saveIntake, clearIntake, setRisk, setPlatform, submitJob,
     saveScope, refreshSurface,
+    // ── [agent: report] ── report export workspace
+    scoreCvss, generateDraft, copyDraft, runQualityGate,
     // pipeline command center
     runPhase, cancelPhase, openPhaseLog, closePhaseLog, refreshPipeline, pipelineNewRun,
     enrollMonitor, toggleMonitor, removeMonitor,
