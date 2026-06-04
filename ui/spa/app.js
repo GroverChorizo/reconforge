@@ -39,6 +39,9 @@ const state = {
     palette:        { open: false, query: "", selected: 0, items: [] },
     pollHandle:     null,
     config:         null,              // /api/config cache (Settings page)
+    // ── [agent: toolchain] ── caches for the Toolchain + Workflows pages.
+    toolchain:      null,              // { tools, summary, plan, human, loaded } from /api/v2/tools/*
+    workflows:      null,              // { list, expanded, detail } from /api/v2/workflows
 };
 
 const LS = {
@@ -62,6 +65,7 @@ const NAV = [
     ]},
     { id: "recon", title: "Recon", items: [
         { route: "pipeline",    label: "Run Pipeline"    },
+        { route: "workflows",   label: "Workflows"       },   // ── [agent: toolchain] ──
         { route: "passive",     label: "Passive Recon"   },
         { route: "active",      label: "Active Recon"    },
         { route: "urls",        label: "URL Collection"  },
@@ -100,6 +104,7 @@ const NAV = [
     ]},
     { id: "admin", title: "Admin", items: [
         { route: "settings",    label: "Settings"        },
+        { route: "toolchain",   label: "Toolchain"       },   // ── [agent: toolchain] ──
         { route: "users",       label: "Users"           },
         { route: "backups",     label: "Backups"         },
         { route: "logs",        label: "System Logs"     },
@@ -258,6 +263,8 @@ function handleRouteChange() {
     if (route === "settings") ensureConfig();
     if (route === "surface")  ensureSurface();
     if (route === "scope")    ensureScope();
+    if (route === "toolchain") ensureToolchain();   // ── [agent: toolchain] ──
+    if (route === "workflows") ensureWorkflows();    // ── [agent: toolchain] ──
     if (route === "pipeline") ensurePipeline();
     else                      stopPipelinePoll();
 }
@@ -1168,6 +1175,309 @@ PAGES.logs = function () {
     `;
 };
 
+// ════════════════════════════════════════════════════════════════
+// ── [agent: toolchain] ── Toolchain health + Workflows pages
+// Wire the otherwise-unused /api/v2/tools/* and /api/v2/workflows
+// endpoints. v2 responses are sent RAW (no _ok envelope), so the
+// payload is r.data directly; we still fall back to r.data.data so a
+// future envelope change can't break these.
+// ════════════════════════════════════════════════════════════════
+
+// Human-readable labels for the tool category keys emitted by tools/detect.py.
+const TOOLCHAIN_CATEGORY_LABELS = {
+    subdomain:  "Subdomain enumeration",
+    dns_http:   "DNS / HTTP",
+    screenshot: "Screenshots",
+    vuln:       "Vulnerability scanning",
+    fuzz:       "Crawl / fuzz",
+    api:        "API / Swagger",
+    graphql:    "GraphQL",
+    cloud:      "Cloud",
+    js:         "JS analysis",
+    other:      "Other",
+};
+
+// ── Toolchain page ───────────────────────────────────────────────
+PAGES.toolchain = function () {
+    const tc = state.toolchain;
+    if (!tc || !tc.loaded) {
+        return `
+          ${renderWorkspaceHead("Toolchain Health", "Admin", "Which of the integrated recon tools are installed on this host.")}
+          ${panel("Detecting tools…", `<div class="tbl-empty">Scanning PATH for the tool catalog…</div>`)}`;
+    }
+    const tools   = Array.isArray(tc.tools) ? tc.tools : [];
+    const summary = tc.summary || {};
+    const total     = summary.total     != null ? summary.total     : tools.length;
+    const installed = summary.installed != null ? summary.installed : tools.filter(t => t && t.installed).length;
+    const missing   = summary.missing   != null ? summary.missing   : (total - installed);
+
+    // Map missing-tool name → install command from the install_plan (best
+    // match: detect.py emits each tool's own install_cmd, but the plan
+    // coalesces apt installs, so we prefer the per-tool install_cmd and fall
+    // back to the human plan block below).
+    const head = renderWorkspaceHead("Toolchain Health", "Admin",
+        "Which of the integrated recon tools are installed on this host.");
+    const metrics = renderMetrics([
+        { label: "Tools integrated", value: total },
+        { label: "Installed",        value: installed, kind: installed ? "success" : "" },
+        { label: "Missing",          value: missing,   kind: missing ? "error" : "" },
+    ]);
+
+    let body = "";
+    if (!tools.length) {
+        body = panel("Tool catalog", `<div class="tbl-empty">No tools reported by the detector.</div>`);
+    } else {
+        // Group tools by category, preserving a stable category order.
+        const groups = {};
+        tools.forEach(t => {
+            const cat = (t && t.category) || "other";
+            (groups[cat] = groups[cat] || []).push(t);
+        });
+        const order = Object.keys(TOOLCHAIN_CATEGORY_LABELS).filter(c => groups[c]);
+        Object.keys(groups).forEach(c => { if (!order.includes(c)) order.push(c); });
+
+        body = order.map(cat => {
+            const rows = groups[cat].slice().sort((a, b) =>
+                String((a && a.name) || "").localeCompare(String((b && b.name) || "")));
+            const instCount = rows.filter(t => t && t.installed).length;
+            const label = TOOLCHAIN_CATEGORY_LABELS[cat] || cat;
+            return panel(`${label} · ${instCount}/${rows.length}`, `
+              <table class="tbl tc-tbl">
+                <thead><tr><th>Tool</th><th>Status</th><th>Binary</th><th>Install</th></tr></thead>
+                <tbody>
+                  ${rows.map(renderToolRow).join("")}
+                </tbody>
+              </table>
+            `);
+        }).join("");
+    }
+
+    return `
+      ${head}
+      ${metrics}
+      ${panel("Detection", `
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <button class="btn btn-sm btn-primary" onclick="ReconForge.refreshToolchain()">↻ Refresh</button>
+          <span class="text-sec" style="font-size:12px;">${escapeHTML(String(installed))} of ${escapeHTML(String(total))} tools detected on PATH.</span>
+        </div>
+        ${missing ? `<div class="form-help">Missing tools show a copy-paste install command. Commands run on the host — ReconForge never installs anything itself.</div>` : ""}
+      `)}
+      ${body}
+      ${state.guideMode ? guidePanel("Why this matters", "ReconForge integrates dozens of recon tools but only runs the ones present on PATH. A missing tool is silently skipped by the pipeline — so a gap here is a blind spot in your recon. Install the missing binaries (go/apt/pip commands shown) to light up the full kill chain.") : ""}
+    `;
+};
+
+function renderToolRow(t) {
+    if (!t) return "";
+    const name   = (t.name || t.binary || "—").toString();
+    const binary = (t.binary || "").toString();
+    if (t.installed) {
+        const ver = t.version ? `<span class="badge badge-success">v${escapeHTML(String(t.version))}</span>`
+                              : `<span class="badge badge-success">INSTALLED</span>`;
+        return `
+          <tr>
+            <td>${escapeHTML(name)}</td>
+            <td>${ver}</td>
+            <td class="mono text-sec">${escapeHTML(binary)}</td>
+            <td class="text-mute" style="font-size:11px;">—</td>
+          </tr>`;
+    }
+    // Missing → surface the per-tool install command with a copy button.
+    const cmdArr = Array.isArray(t.install_cmd) ? t.install_cmd : null;
+    const cmd    = cmdArr ? cmdArr.join(" ") : "";
+    const method = (t.install_method || "manual").toString();
+    const installCell = cmd
+        ? `<code class="tc-install mono">${escapeHTML(cmd)}</code>
+           <button class="btn btn-sm btn-ghost" onclick="ReconForge.copyToolInstall('${escapeAttr(binary)}')">copy</button>`
+        : `<span class="text-mute" style="font-size:11px;">${escapeHTML(t.notes || "manual install")}</span>`;
+    return `
+      <tr>
+        <td>${escapeHTML(name)}</td>
+        <td><span class="badge badge-muted">MISSING</span> <span class="badge badge-muted">${escapeHTML(method)}</span></td>
+        <td class="mono text-sec">${escapeHTML(binary)}</td>
+        <td class="tc-install-cell">${installCell}</td>
+      </tr>`;
+}
+
+async function ensureToolchain() {
+    // Fetch detection + install plan in parallel. v2 payload is raw (r.data).
+    const [health, plan] = await Promise.all([
+        api("GET",  "/api/v2/tools/health"),
+        api("POST", "/api/v2/tools/install_plan"),
+    ]);
+    const hd = (health.ok && health.data) ? (health.data.data || health.data) : {};
+    const pd = (plan.ok   && plan.data)   ? (plan.data.data   || plan.data)   : {};
+    state.toolchain = {
+        tools:   Array.isArray(hd.tools) ? hd.tools : [],
+        summary: hd.summary || {},
+        plan:    Array.isArray(pd.plan) ? pd.plan : [],
+        human:   pd.human || "",
+        loaded:  true,
+    };
+    if (!health.ok) consoleLog("error", "tool health fetch failed: HTTP " + health.status);
+    if (currentRoute() === "toolchain") renderWorkspace();
+}
+
+function refreshToolchain() {
+    state.toolchain = null;
+    renderWorkspace();
+    // Force a server-side re-scan rather than the 60s cache.
+    (async () => {
+        const [health, plan] = await Promise.all([
+            api("GET",  "/api/v2/tools/health?refresh=1"),
+            api("POST", "/api/v2/tools/install_plan"),
+        ]);
+        const hd = (health.ok && health.data) ? (health.data.data || health.data) : {};
+        const pd = (plan.ok   && plan.data)   ? (plan.data.data   || plan.data)   : {};
+        state.toolchain = {
+            tools:   Array.isArray(hd.tools) ? hd.tools : [],
+            summary: hd.summary || {},
+            plan:    Array.isArray(pd.plan) ? pd.plan : [],
+            human:   pd.human || "",
+            loaded:  true,
+        };
+        if (health.ok) { consoleLog("success", "toolchain re-scanned"); }
+        else { toast("Tool detection failed.", "error"); }
+        if (currentRoute() === "toolchain") renderWorkspace();
+    })();
+}
+
+function copyToolInstall(binary) {
+    const tc = state.toolchain || {};
+    const t = (tc.tools || []).find(x => x && x.binary === binary);
+    const cmd = (t && Array.isArray(t.install_cmd)) ? t.install_cmd.join(" ") : "";
+    if (!cmd) { toast("No install command for this tool.", "error"); return; }
+    copyToClipboard(cmd);
+}
+
+// ── Workflows page ───────────────────────────────────────────────
+PAGES.workflows = function () {
+    const wf = state.workflows;
+    if (!wf || !wf.loaded) {
+        return `
+          ${renderWorkspaceHead("Workflows", "Recon", "Named tool bundles the pipeline can run, with their safety envelope.")}
+          ${panel("Loading workflows…", `<div class="tbl-empty">Fetching registered workflows…</div>`)}`;
+    }
+    const list = Array.isArray(wf.list) ? wf.list : [];
+    const head = renderWorkspaceHead("Workflows", "Recon",
+        "Named tool bundles the pipeline can run, with their safety envelope.");
+    if (!list.length) {
+        return `${head}${panel("Registered workflows", `<div class="tbl-empty">No workflows registered.</div>`)}`;
+    }
+    const metrics = renderMetrics([
+        { label: "Workflows",   value: list.length },
+        { label: "Auto-run",    value: list.filter(w => w && !w.requires_approval).length, kind: "success" },
+        { label: "Need approval", value: list.filter(w => w && w.requires_approval).length, kind: "processing" },
+    ]);
+    const cards = list.map(renderWorkflowCard).join("");
+    return `
+      ${head}
+      ${metrics}
+      <div class="wf-cards">${cards}</div>
+      ${state.guideMode ? guidePanel("How workflows run", "A workflow bundles a mode + an ordered tool list + a safety envelope (traffic level, default rate-limit, scope requirement). The pipeline and pre-flight modal read these to know what a job will do before it runs. Workflows marked APPROVAL pause for an explicit operator confirm; SCOPE workflows refuse to dispatch until Scope Guard passes.") : ""}
+    `;
+};
+
+function trafficBadge(level) {
+    const map = {
+        none:      ["success",    "NO TRAFFIC"],
+        low:       ["success",    "LOW TRAFFIC"],
+        moderate:  ["processing", "MODERATE"],
+        intrusive: ["error",      "INTRUSIVE"],
+    };
+    const [cls, label] = map[level] || ["muted", String(level || "—").toUpperCase()];
+    return `<span class="badge badge-${cls}">${label}</span>`;
+}
+
+function renderWorkflowCard(w) {
+    if (!w) return "";
+    const id    = (w.id || "").toString();
+    const name  = (w.name || id || "workflow").toString();
+    const desc  = (w.description || "").toString();
+    const mode  = (w.mode || "").toString();
+    const safety = w.safety || {};
+    const steps  = Array.isArray(w.tools) ? w.tools : [];
+    const inputs  = Array.isArray(w.inputs)  ? w.inputs  : [];
+    const outputs = Array.isArray(w.outputs) ? w.outputs : [];
+    const expanded = state.workflows && state.workflows.expanded === id;
+
+    const tags = [
+        trafficBadge(safety.traffic_level),
+        w.requires_approval ? `<span class="badge badge-processing">APPROVAL</span>` : `<span class="badge badge-success">AUTO</span>`,
+        w.scope_required    ? `<span class="badge badge-muted">SCOPE</span>` : "",
+        (safety.default_rate_limit_rps != null && safety.default_rate_limit_rps > 0)
+            ? `<span class="badge badge-muted">${escapeHTML(String(safety.default_rate_limit_rps))} rps</span>` : "",
+    ].filter(Boolean).join(" ");
+
+    const stepList = steps.length
+        ? `<div class="wf-steps">${steps.map(s => {
+              const sid = (s && s.id) || "?";
+              const opt = (s && s.optional) ? ` <span class="wf-step-opt">opt</span>` : "";
+              return `<span class="wf-step mono" title="${escapeAttr((s && s.description) || "")}">${escapeHTML(sid)}${opt}</span>`;
+          }).join("")}</div>`
+        : `<div class="wf-steps wf-steps-empty text-mute">no tools declared — operator selects per run</div>`;
+
+    const detail = expanded ? `
+      <div class="wf-detail">
+        <dl class="forge-meta">
+          <dt>Mode</dt>    <dd class="mono">${escapeHTML(mode || "—")}</dd>
+          <dt>Inputs</dt>  <dd class="mono text-sec">${inputs.length ? escapeHTML(inputs.join(", ")) : "—"}</dd>
+          <dt>Outputs</dt> <dd class="mono text-sec">${outputs.length ? escapeHTML(outputs.join(", ")) : "—"}</dd>
+          <dt>Scope</dt>   <dd>${w.scope_required ? "required before dispatch" : "not required"}</dd>
+          <dt>Approval</dt><dd>${w.requires_approval ? "operator must confirm" : "runs automatically"}</dd>
+        </dl>
+        ${steps.length ? `
+          <table class="tbl wf-step-tbl">
+            <thead><tr><th>Tool</th><th>Role</th><th>Step</th></tr></thead>
+            <tbody>
+              ${steps.map(s => `
+                <tr>
+                  <td class="mono">${escapeHTML((s && s.id) || "—")}</td>
+                  <td class="text-sec">${escapeHTML((s && s.description) || "—")}</td>
+                  <td>${(s && s.optional) ? `<span class="badge badge-muted">OPTIONAL</span>` : `<span class="badge badge-success">CORE</span>`}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        ` : ""}
+      </div>
+    ` : "";
+
+    return `
+      <div class="wf-card ${expanded ? "open" : ""}">
+        <div class="wf-card-head">
+          <span class="wf-name">${escapeHTML(name)}</span>
+          <span class="wf-tags">${tags}</span>
+        </div>
+        ${desc ? `<div class="wf-desc text-sec">${escapeHTML(desc)}</div>` : ""}
+        ${stepList}
+        ${detail}
+        <div class="wf-actions">
+          <button class="btn btn-sm btn-ghost" onclick="ReconForge.toggleWorkflow('${escapeAttr(id)}')">${expanded ? "▾ Hide detail" : "▸ Detail"}</button>
+        </div>
+      </div>`;
+}
+
+async function ensureWorkflows() {
+    const r = await api("GET", "/api/v2/workflows");
+    const d = (r.ok && r.data) ? (r.data.data || r.data) : {};
+    const prev = state.workflows || {};
+    state.workflows = {
+        list:     Array.isArray(d.workflows) ? d.workflows : [],
+        expanded: prev.expanded || null,   // preserve an open card across reloads
+        loaded:   true,
+    };
+    if (!r.ok) consoleLog("error", "workflows fetch failed: HTTP " + r.status);
+    if (currentRoute() === "workflows") renderWorkspace();
+}
+
+function toggleWorkflow(id) {
+    if (!state.workflows) return;
+    state.workflows.expanded = (state.workflows.expanded === id) ? null : id;
+    renderWorkspace();
+}
+// ── [agent: toolchain] ── end Toolchain + Workflows block ─────────
+
 // ── Components ────────────────────────────────────────────────────
 function renderWorkspaceHead(title, eyebrow, sub) {
     return `
@@ -2050,6 +2360,8 @@ window.ReconForge = {
     runPhase, cancelPhase, openPhaseLog, closePhaseLog, refreshPipeline, pipelineNewRun,
     enrollMonitor, toggleMonitor, removeMonitor,
     saveOpsec,
+    // ── [agent: toolchain] ── toolchain health + workflows
+    refreshToolchain, copyToolInstall, toggleWorkflow,
     openPalette, closePalette, executePalette,
     toggleConsole, clearConsole,
     toggleGuide,

@@ -1171,3 +1171,63 @@ kbd {
   padding: 1px 5px;
 }
 .phase-actions { display: flex; gap: 6px; }
+
+/* ════════════════════════════════════════════════════════════════
+   ── [agent: toolchain] ── Toolchain health + Workflows pages
+   ════════════════════════════════════════════════════════════════ */
+
+/* Toolchain tables — the install command can be long, so let it wrap and
+   keep the table dense like the rest of the app. */
+.tc-tbl td { vertical-align: top; }
+.tc-install-cell { white-space: normal; }
+.tc-install {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  border-radius: 2px;
+  padding: 1px 6px;
+  margin-right: 6px;
+  word-break: break-all;
+  max-width: 460px;
+}
+
+/* Workflows — card grid mirrors the pipeline phase-card grid. */
+.wf-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+}
+.wf-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-muted);
+  border-left: 3px solid var(--accent-purple);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.wf-card.open { border-color: var(--accent-purple); }
+.wf-card-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.wf-name { font-weight: 600; color: var(--text-primary); flex: 1; }
+.wf-tags { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.wf-desc { font-size: 12px; line-height: 1.5; margin-bottom: 10px; }
+.wf-steps { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.wf-steps-empty { font-size: 11px; font-style: italic; }
+.wf-step {
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft); border-radius: 2px;
+  padding: 1px 5px;
+}
+.wf-step-opt { color: var(--text-muted); font-size: 9px; }
+.wf-detail {
+  border-top: 1px solid var(--border-muted);
+  margin-top: 4px; padding-top: 10px; margin-bottom: 10px;
+}
+.wf-step-tbl { margin-top: 8px; }
+.wf-actions { display: flex; gap: 6px; }
+/* ── [agent: toolchain] ── end ──────────────────────────────────── */
