@@ -1171,3 +1171,56 @@ kbd {
   padding: 1px 5px;
 }
 .phase-actions { display: flex; gap: 6px; }
+
+/* ════════════════════════════════════════════════════════════════
+   [agent: report] — Report Export workspace (CVSS calc + draft + gate)
+   ════════════════════════════════════════════════════════════════ */
+#export-cvss, #export-class, #export-asset { width: 100%; }
+
+.cvss-result {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono);
+}
+.cvss-score-num {
+  font-size: 18px; font-weight: 700; color: var(--accent-purple-hi);
+  letter-spacing: -0.02em;
+}
+
+.report-draft {
+  width: 100%; min-height: 300px; margin-top: 10px;
+  font-size: 11.5px; line-height: 1.5;
+  white-space: pre; word-break: normal; overflow-wrap: normal;
+}
+
+/* Quality gate */
+.gate-summary {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 10px;
+}
+.gate-bar {
+  flex: 1; height: 5px; border-radius: 3px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  overflow: hidden;
+}
+.gate-bar-fill {
+  height: 100%; background: var(--status-success);
+  transition: width 0.2s ease;
+}
+.gate-list { list-style: none; margin: 0; padding: 0; }
+.gate-check {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+.gate-check:last-child { border-bottom: none; }
+.gate-mark { width: 14px; text-align: center; color: var(--text-muted); flex: none; }
+.gate-check.pass .gate-mark { color: var(--status-success); }
+.gate-check.fail .gate-mark { color: var(--status-error); }
+.gate-label { color: var(--text-primary); flex: none; }
+.gate-check.fail .gate-label { color: var(--status-error); }
+.gate-reason {
+  color: var(--text-muted); font-size: 11px;
+  margin-left: auto; text-align: right;
+}
