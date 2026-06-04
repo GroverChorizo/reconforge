@@ -1021,6 +1021,9 @@ function slugifyName(name) {
 }
 
 async function resolveProgramSlug() {
+    // Fast path: the bridged slug carried back on /api/scope (POST or GET) — the
+    // exact v2 `programs` row scope-save wrote, so no slugify-parity guessing.
+    if (state.scope && state.scope.programSlug) return state.scope.programSlug;
     // Candidate names from current engagement state.
     const wantNames = [state.workspace, state.program, (state.scope && state.scope.program), state.target]
         .filter(Boolean).map(s => String(s).toLowerCase());
@@ -2991,6 +2994,7 @@ async function pushScope(inScope, outScope) {
             outScope: (p.out_of_scope || []).map(e => e.value || e),
             active:   true,
             programPath: r.data.data.active_program || "",
+            programSlug: r.data.data.program_slug || "",   // v2 row the bridge wrote
         };
         LS.set("scope", state.scope);
         consoleLog("success", "scope enforced: " + state.scope.inScope.length +
@@ -3029,6 +3033,7 @@ async function ensureScope() {
         outScope: (prog.out_of_scope || []).map(e => (e.value || e || "").toString()),
         active:   true,
         programPath: d.active_program || "",
+        programSlug: d.program_slug || "",   // v2 row the bridge wrote
     };
     LS.set("scope", state.scope);
     if (currentRoute() === "scope") renderWorkspace();

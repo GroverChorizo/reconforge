@@ -1189,6 +1189,44 @@ def _save_scope_program(target: str, program_name: str, workspace: str,
     set_config("active_program", rel)
     return prog, rel
 
+_V2_PLATFORMS = {"intigriti", "hackerone", "bugcrowd", "yeswehack", "synack", "other"}
+
+def _bridge_program_row(prog: Dict[str, Any], workspace: str, target: str) -> Optional[str]:
+    """Mirror the just-saved scope into the v2 `programs` table so the v2 API
+    (findings board, program dashboard, asset tree) can resolve it by slug.
+    Idempotent: updates the row in place when the slug already exists, so
+    re-saving scope for a workspace never spawns program-2, program-3, …
+    Best-effort — never let a bridge failure break scope saving."""
+    try:
+        from core import programs as programs_mod
+        db = get_db()
+        slug = programs_mod.slugify(workspace or target)
+        plat = (prog.get("platform") or "").lower().strip()
+        if plat not in _V2_PLATFORMS:
+            plat = "other"
+        scope_j = json.dumps(prog.get("in_scope") or [])
+        oos_j   = json.dumps(prog.get("out_of_scope") or [])
+        if db.execute("SELECT 1 FROM programs WHERE slug=?", (slug,)).fetchone():
+            db.execute(
+                "UPDATE programs SET name=?, platform=?, platform_handle=?, "
+                "scope_json=?, out_of_scope_json=?, updated_at=datetime('now') "
+                "WHERE slug=?",
+                (prog.get("name") or target, plat, prog.get("platform_handle", ""),
+                 scope_j, oos_j, slug))
+        else:
+            db.execute(
+                "INSERT INTO programs(slug, name, platform, platform_handle, "
+                "policy_url, scope_json, out_of_scope_json, bounty_ranges_json, "
+                "contacts_json, notes) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (slug, prog.get("name") or target, plat,
+                 prog.get("platform_handle", ""), "",
+                 scope_j, oos_j, "{}", "{}", ""))
+        db.commit()
+        return slug
+    except Exception as e:
+        emit(f"v2 program bridge failed (scope still saved): {e}", "WARNING", "scope_guard")
+        return None
+
 def _emit_contract(job: Job, status: str):
     """Emit the vault contract dir for a completed job. Returns the run dir
     Path (or None). Mirrors the ctx/result shape in __main__.py:_cmd_contract."""
@@ -3155,9 +3193,19 @@ class ReconHandler(BaseHTTPRequestHandler):
     # ── API: scope (active program) ──────────────────────────
     def _api_scope_get(self) -> None:
         """Return the currently-enforced program (or null) so the Scope page
-        can render exactly what scope_guard will gate on."""
+        can render exactly what scope_guard will gate on. Includes the v2
+        program slug so the findings board resolves the same row the bridge
+        wrote (no slugify-parity guessing on the client)."""
         prog = _active_program()
-        self._ok({"program": prog, "active_program": get_config("active_program")})
+        slug = None
+        if prog:
+            try:
+                from core import programs as _pm
+                slug = _pm.slugify(prog.get("workspace") or prog.get("name") or "")
+            except Exception:
+                slug = None
+        self._ok({"program": prog, "active_program": get_config("active_program"),
+                  "program_slug": slug})
 
     def _api_scope_save(self, session: Dict) -> None:
         """Persist the operator's declared scope to scopes/<slug>.json and make
@@ -3167,10 +3215,11 @@ class ReconHandler(BaseHTTPRequestHandler):
         target = (body.get("target") or "").strip().lower()
         if not target:
             return self._err("target is required")
+        workspace = (body.get("workspace") or "").strip()
         prog, rel = _save_scope_program(
             target=target,
             program_name=(body.get("program") or "").strip(),
-            workspace=(body.get("workspace") or "").strip(),
+            workspace=workspace,
             platform=(body.get("platform") or "").strip(),
             handle=(body.get("platform_handle") or "").strip(),
             in_scope=body.get("in_scope"),
@@ -3178,13 +3227,17 @@ class ReconHandler(BaseHTTPRequestHandler):
         )
         # Register the target so it surfaces in /api/targets + the asset map.
         db_exec("INSERT OR IGNORE INTO targets(domain) VALUES(?)", (target,))
+        # Bridge into the v2 `programs` table so the findings board / program
+        # dashboard / asset tree can resolve this engagement by slug.
+        slug = _bridge_program_row(prog, workspace, target)
         add_history(target, "scope",
                     f"scope set: {len(prog['in_scope'])} in / "
                     f"{len(prog['out_of_scope'])} out ({session.get('username','?')})")
         emit(f"active program set to {rel} "
-             f"({len(prog['in_scope'])} in-scope, {len(prog['out_of_scope'])} out)",
-             "INFO", "scope_guard")
-        self._ok({"program": prog, "active_program": rel}, "Scope saved & enforced")
+             f"({len(prog['in_scope'])} in-scope, {len(prog['out_of_scope'])} out; "
+             f"v2 slug={slug})", "INFO", "scope_guard")
+        self._ok({"program": prog, "active_program": rel, "program_slug": slug},
+                 "Scope saved & enforced")
 
     # ── API: pipeline (shell kill-chain phases) ──────────────
     def _api_pipeline_get(self, qs: Dict) -> None:
