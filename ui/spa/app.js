@@ -22,6 +22,11 @@ const state = {
     // wired to these exact rules.
     scope:          { program: "", platform: "", inScope: [], outScope: [], active: false },
     surfaceSubs:    null,             // /api/subdomains cache for the Asset Map
+    // Pipeline command-center (shell kill chain driven from the app).
+    pipeline:       { data: null },   // last /api/pipeline response
+    phaseLog:       { phaseId: null, jobId: null, text: "", open: false },
+    pipelinePoll:   null,             // fast log/status poll handle (pipeline page)
+    freshNext:      false,            // arm a fresh run timestamp for the next phase
     riskMode:       "passive",        // "passive" | "active" | "aggressive"
     // Intake form draft. Bound to every field on the Intake page and updated
     // on each keystroke so a re-render (e.g. selecting a risk mode) never wipes
@@ -56,6 +61,7 @@ const NAV = [
         { route: "scope",       label: "Scope"           },
     ]},
     { id: "recon", title: "Recon", items: [
+        { route: "pipeline",    label: "Run Pipeline"    },
         { route: "passive",     label: "Passive Recon"   },
         { route: "active",      label: "Active Recon"    },
         { route: "urls",        label: "URL Collection"  },
@@ -201,6 +207,7 @@ async function logout() {
     try { await api("POST", "/api/logout"); } catch (_) {}
     state.authed = false; state.user = null; state.role = null;
     if (state.pollHandle) { clearInterval(state.pollHandle); state.pollHandle = null; }
+    stopPipelinePoll();
     showLogin();
 }
 
@@ -251,9 +258,12 @@ function handleRouteChange() {
     if (route === "settings") ensureConfig();
     if (route === "surface")  ensureSurface();
     if (route === "scope")    ensureScope();
+    if (route === "pipeline") ensurePipeline();
+    else                      stopPipelinePoll();
 }
 
 function routeToPhase(route) {
+    if (route === "pipeline") return "pipeline";
     for (const step of KILL_CHAIN) {
         if (step.routes.includes(route)) return step.id;
     }
@@ -275,6 +285,7 @@ function phaseLabel(phase) {
         "report":     "report export",
         "dashboard":  "mission control",
         "operations": "operations",
+        "pipeline":   "kill chain",
         "admin":      "admin",
     }[phase] || phase;
 }
@@ -933,6 +944,164 @@ PAGES.resources = function () {
       ])}
     `;
 };
+
+// ── Pipeline command center (drives scripts/recon/NN-*.sh) ───────
+PAGES.pipeline = function () {
+    if (!state.target) {
+        return `
+          ${renderWorkspaceHead("Run Pipeline", "Recon", "Execute the kill chain phase by phase.")}
+          ${panel("No target loaded", `<div class="tbl-empty">Load a target on <span class="mono">Target → Intake</span> first, then run phases here.</div>`)}`;
+    }
+    const d = state.pipeline.data;
+    const scopeOk = !!(state.scope && state.scope.active);
+    const runInfo = (d && d.datestamp) ? `run <span class="mono">${escapeHTML(d.datestamp)}</span>` : "no run yet";
+    return `
+      ${renderWorkspaceHead("Run Pipeline", "Recon", "Drive the shell kill chain — live logs stream here and results land in the app.")}
+      <div class="pipeline-bar">
+        <div>
+          target <span class="mono text-purple">${escapeHTML(state.target)}</span> · ${runInfo} ·
+          ${scopeOk ? `<span class="badge badge-success">SCOPE ENFORCED</span>`
+                    : `<span class="badge badge-error">SCOPE NOT WIRED</span>`}
+          ${state.freshNext ? ` · <span class="badge badge-processing">FRESH RUN ARMED</span>` : ""}
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button class="btn btn-sm btn-ghost" onclick="ReconForge.pipelineNewRun()">New run</button>
+          <button class="btn btn-sm btn-ghost" onclick="ReconForge.refreshPipeline()">↻ Refresh</button>
+        </div>
+      </div>
+      ${renderPipelineLogPanel()}
+      <div id="pipeline-list">${renderPipelineList()}</div>
+      ${state.guideMode ? guidePanel("How this runs", "Each Run executes scripts/recon/NN-*.sh on the host as a job. scope_guard gates the target before anything spawns; the script also receives SCOPE_FILE. Logs stream here live; phases marked DB ingest their hosts/findings so the Asset Map and reports populate. Phases share one run timestamp until you click New run.") : ""}
+    `;
+};
+
+function renderPipelineLogPanel() {
+    const pl = state.phaseLog;
+    const label = pl.phaseId ? pipelinePhaseLabel(pl.phaseId) : "—";
+    return `
+      <div class="panel" id="pipeline-log-wrap" ${pl.open ? "" : "hidden"}>
+        <div class="panel-head">
+          <span>live log · ${escapeHTML(label)}</span>
+          <button class="console-btn" onclick="ReconForge.closePhaseLog()">hide</button>
+        </div>
+        <div class="panel-body"><pre id="phase-log-pre" class="phase-log">${escapeHTML(pl.text || "(waiting for output…)")}</pre></div>
+      </div>`;
+}
+
+function pipelinePhaseLabel(id) {
+    const d = state.pipeline.data;
+    const p = (d && d.phases || []).find(x => x.id === id);
+    return p ? `${p.num} ${p.label}` : id;
+}
+
+function renderPipelineList() {
+    const d = state.pipeline.data;
+    if (!d) return `<div class="tbl-empty">Loading phases…</div>`;
+    return `<div class="phase-cards">${(d.phases || []).map(renderPhaseCard).join("")}</div>`;
+}
+
+function renderPhaseCard(p) {
+    const st = p.status || "";
+    const running = st === "running";
+    const tools = (p.tools || []).map(t => `<span class="phase-tool">${escapeHTML(t)}</span>`).join("");
+    return `
+      <div class="phase-card" data-state="${st}">
+        <div class="phase-card-head">
+          <span class="phase-num mono">${escapeHTML(p.num)}</span>
+          <span class="phase-label">${escapeHTML(p.label)}</span>
+          <span class="risk-badge" data-risk="${p.risk}">${p.risk.toUpperCase()}</span>
+          ${p.ingests ? `<span class="badge badge-muted" title="results ingest into the database">DB</span>` : ""}
+          ${phaseStatusBadge(st, p.added)}
+        </div>
+        <div class="phase-tools">${tools}</div>
+        <div class="phase-actions">
+          ${running
+            ? `<button class="btn btn-sm btn-ghost" onclick="ReconForge.cancelPhase('${p.job_id}')">■ Cancel</button>`
+            : `<button class="btn btn-sm btn-primary" onclick="ReconForge.runPhase('${p.id}')">▸ Run</button>`}
+          ${p.job_id ? `<button class="btn btn-sm btn-ghost" onclick="ReconForge.openPhaseLog('${p.id}')">logs</button>` : ""}
+        </div>
+      </div>`;
+}
+
+function phaseStatusBadge(st, added) {
+    if (st === "running")   return `<span class="badge badge-processing">RUNNING</span>`;
+    if (st === "completed") return `<span class="badge badge-success">DONE${added ? ` +${added}` : ""}</span>`;
+    if (st === "failed")    return `<span class="badge badge-error">FAILED</span>`;
+    if (st === "cancelled") return `<span class="badge badge-muted">CANCELLED</span>`;
+    return `<span class="badge badge-muted">IDLE</span>`;
+}
+
+async function ensurePipeline() {
+    if (!state.pipeline) state.pipeline = { data: null };
+    if (!state.target) { if (currentRoute() === "pipeline") renderWorkspace(); return; }
+    const r = await api("GET", "/api/pipeline?target=" + encodeURIComponent(state.target));
+    if (r.ok) state.pipeline.data = r.data.data || r.data;
+    if (currentRoute() === "pipeline") renderWorkspace();
+    if (((state.pipeline.data && state.pipeline.data.phases) || []).some(p => p.status === "running")) {
+        startPipelinePoll();
+    }
+}
+function refreshPipeline() { ensurePipeline(); }
+
+async function runPhase(phaseId) {
+    if (!state.target) { toast("Load a target first.", "error"); return; }
+    const r = await api("POST", "/api/pipeline/run",
+                        { target: state.target, phase: phaseId, fresh: !!state.freshNext });
+    if (r.ok && r.data && r.data.success) {
+        state.freshNext = false;
+        state.phaseLog = { phaseId, text: "(waiting for output…)", open: true };
+        consoleLog("success", "phase queued: " + phaseId);
+        toast("Phase queued: " + phaseId, "success");
+        await ensurePipeline();
+        startPipelinePoll();
+    } else {
+        const msg = (r.data && r.data.message) || ("HTTP " + r.status);
+        consoleLog("error", "phase run refused: " + msg);
+        toast("Run refused: " + msg, "error");
+    }
+}
+
+async function cancelPhase(jobId) {
+    if (!jobId) return;
+    await api("POST", "/api/jobs/" + jobId + "/cancel");
+    consoleLog("log", "phase cancel requested");
+    ensurePipeline();
+}
+
+function openPhaseLog(phaseId) {
+    state.phaseLog = { phaseId, text: "(loading…)", open: true };
+    renderWorkspace();
+    pipelineTick();
+}
+function closePhaseLog() { state.phaseLog.open = false; renderWorkspace(); }
+function pipelineNewRun() { state.freshNext = true; toast("Next phase starts a fresh run.", "info"); renderWorkspace(); }
+
+function startPipelinePoll() { stopPipelinePoll(); state.pipelinePoll = setInterval(pipelineTick, 1500); }
+function stopPipelinePoll() { if (state.pipelinePoll) { clearInterval(state.pipelinePoll); state.pipelinePoll = null; } }
+
+async function pipelineTick() {
+    if (currentRoute() !== "pipeline") { stopPipelinePoll(); return; }
+    if (state.target) {
+        const pr = await api("GET", "/api/pipeline?target=" + encodeURIComponent(state.target));
+        if (pr.ok) state.pipeline.data = pr.data.data || pr.data;
+    }
+    if (state.phaseLog.phaseId && state.phaseLog.open && state.target) {
+        const lr = await api("GET", "/api/pipeline/logs?target=" + encodeURIComponent(state.target) +
+                                    "&phase=" + encodeURIComponent(state.phaseLog.phaseId));
+        if (lr.ok) {
+            const dd = (lr.data && (lr.data.data || lr.data)) || {};
+            const logs = dd.logs || [];
+            state.phaseLog.text = Array.isArray(logs) ? logs.join("\n") : String(logs);
+        }
+    }
+    // Targeted DOM updates so the live tick doesn't rebuild the whole page.
+    const listEl = document.getElementById("pipeline-list");
+    if (listEl) listEl.innerHTML = renderPipelineList();
+    const pre = document.getElementById("phase-log-pre");
+    if (pre && state.phaseLog.open) { pre.textContent = state.phaseLog.text || "(waiting for output…)"; pre.scrollTop = pre.scrollHeight; }
+    const anyRunning = ((state.pipeline.data && state.pipeline.data.phases) || []).some(p => p.status === "running");
+    if (!anyRunning) stopPipelinePoll();
+}
 
 PAGES.settings = function () {
     const c = state.config || {};
@@ -1877,6 +2046,8 @@ window.ReconForge = {
     go: navigateTo,
     saveIntake, clearIntake, setRisk, setPlatform, submitJob,
     saveScope, refreshSurface,
+    // pipeline command center
+    runPhase, cancelPhase, openPhaseLog, closePhaseLog, refreshPipeline, pipelineNewRun,
     enrollMonitor, toggleMonitor, removeMonitor,
     saveOpsec,
     openPalette, closePalette, executePalette,

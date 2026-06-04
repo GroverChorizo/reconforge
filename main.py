@@ -2073,6 +2073,284 @@ def _running_count() -> int:
     with _lock:
         return sum(1 for j in _jobs.values() if j.status == "running")
 
+# ═══════════════════════════════════════════════════════════
+#  PIPELINE PHASES  (app drives the shell kill chain)
+# ═══════════════════════════════════════════════════════════
+# The scripts/recon/NN-*.sh kill chain is the canonical recon engine. The app
+# runs each phase as a Job: streams its logs live, gates it on the active scope
+# (SCOPE_FILE), injects OPSEC via env, and ingests phase output back into the
+# DB so the Asset Map / reports populate. One run shares a DATESTAMP per target.
+PIPELINE_PHASES: List[Dict[str, Any]] = [
+    {"id":"scope-check",      "num":"00","script":"00-scope-check.sh",      "label":"Scope Check",        "risk":"passive",    "tools":["scope_guard"]},
+    {"id":"passive-enum",     "num":"01","script":"01-passive-enum.sh",     "label":"Passive Enum",       "risk":"passive",    "tools":["subfinder","amass","assetfinder","findomain","github-subdomains","crtsh","chaos"], "ingest":"subs"},
+    {"id":"resolve",          "num":"02","script":"02-resolve.sh",          "label":"Resolve",            "risk":"active",     "tools":["puredns","dnsx","shuffledns"], "ingest":"resolved"},
+    {"id":"tls-cdn",          "num":"03","script":"03-tls-cdn.sh",          "label":"TLS / CDN",          "risk":"active",     "tools":["tlsx","cdncheck"]},
+    {"id":"port-scan",        "num":"04","script":"04-port-scan.sh",        "label":"Port Scan",          "risk":"active",     "tools":["naabu"]},
+    {"id":"http-probe",       "num":"05","script":"05-http-probe.sh",       "label":"HTTP Probe",         "risk":"active",     "tools":["httpx"], "ingest":"httpx"},
+    {"id":"crawl",            "num":"06","script":"06-crawl.sh",            "label":"Crawl",              "risk":"active",     "tools":["katana","hakrawler"]},
+    {"id":"js-analyze",       "num":"07","script":"07-js-analyze.sh",       "label":"JS Analyze",         "risk":"active",     "tools":["subjs","jsluice","trufflehog","mantra"]},
+    {"id":"content-discovery","num":"08","script":"08-content-discovery.sh","label":"Content Discovery",  "risk":"aggressive", "tools":["feroxbuster","ffuf","gobuster","dirsearch"]},
+    {"id":"archive-urls",     "num":"09","script":"09-archive-urls.sh",     "label":"Archive URLs",       "risk":"passive",    "tools":["gau","waybackurls"]},
+    {"id":"param-discovery",  "num":"10","script":"10-param-discovery.sh",  "label":"Param Discovery",    "risk":"active",     "tools":["arjun","paramspider","x8"]},
+    {"id":"pattern-filter",   "num":"11","script":"11-pattern-filter.sh",   "label":"Pattern Filter (gf)","risk":"passive",    "tools":["gf"]},
+    {"id":"payload-replace",  "num":"12","script":"12-payload-replace.sh",  "label":"Payload Replace",    "risk":"passive",    "tools":["qsreplace"]},
+    {"id":"oob-callback",     "num":"13","script":"13-oob-callback.sh",     "label":"OOB Callback",       "risk":"passive",    "tools":["interactsh"]},
+    {"id":"vuln-scan",        "num":"14","script":"14-vuln-scan.sh",        "label":"Vuln Scan (nuclei)", "risk":"aggressive", "tools":["nuclei"], "ingest":"nuclei"},
+    {"id":"xss-targeted",     "num":"15","script":"15-xss-targeted.sh",     "label":"XSS",                "risk":"aggressive", "tools":["gxss","dalfox"]},
+    {"id":"crlf",             "num":"16","script":"16-crlf.sh",             "label":"CRLF",               "risk":"aggressive", "tools":["crlfuzz"]},
+    {"id":"sqli",             "num":"17","script":"17-sqli.sh",             "label":"SQLi (gated)",       "risk":"aggressive", "tools":["sqlmap"]},
+    {"id":"screenshot",       "num":"18","script":"18-screenshot.sh",       "label":"Screenshot",         "risk":"active",     "tools":["gowitness"]},
+    {"id":"secrets",          "num":"19","script":"19-secrets.sh",          "label":"Secrets",            "risk":"passive",    "tools":["trufflehog"]},
+    {"id":"alert",            "num":"20","script":"20-alert.sh",            "label":"Alert / Notify",     "risk":"passive",    "tools":["notify"]},
+]
+_PHASE_BY_ID: Dict[str, Dict[str, Any]] = {p["id"]: p for p in PIPELINE_PHASES}
+_RECON_SCRIPTS_DIR = os.path.join(_BASE, "scripts", "recon")
+_phase_runs: Dict[str, str] = {}            # target -> shared DATESTAMP for the run
+# target -> {phase_id: {status, job_id, at, added}} — last per-phase outcome for the UI.
+_phase_status: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+def _run_datestamp(target: str, fresh: bool = False) -> str:
+    with _lock:
+        if fresh or target not in _phase_runs:
+            _phase_runs[target] = datetime.now().strftime("%Y-%m-%d-%H%M")
+        return _phase_runs[target]
+
+def _phase_out_root() -> str:
+    return os.path.expanduser(get_config("reconforge_output_dir", os.path.join(_BASE, "out")))
+
+def _phase_run_dir(target: str, datestamp: str, phase: Dict[str, Any]) -> str:
+    # The script's out_dir() is $OUTPUT/$TARGET/$DATESTAMP/$PHASE where $PHASE is
+    # the script stem (e.g. 01-passive-enum) — mirror that exactly for ingest.
+    return os.path.join(_phase_out_root(), target, datestamp, phase["script"][:-3])
+
+def _phase_env(target: str, datestamp: str) -> Dict[str, str]:
+    """Environment for a phase script. Passes the active scope file (so
+    ensure_scope refuses out-of-scope), OPSEC rate/proxy, threads, and tokens."""
+    env = dict(os.environ)
+    oe = _opsec_env()
+    if oe:
+        env.update(oe)
+    env["TARGET"] = target
+    env["RECONFORGE_OUTPUT_DIR"] = _phase_out_root()
+    env["DATESTAMP"] = datestamp
+    env["THREADS"] = str(get_config("threads", 10) or 10)
+    env["RATE_LIMIT_RPS"] = str(_opsec_rate_limit())
+    ap = get_config("active_program")
+    if ap:
+        env["SCOPE_FILE"] = ap if os.path.isabs(ap) else os.path.join(_BASE, ap)
+    gh = get_config("github_token")
+    if gh:
+        env["GITHUB_TOKEN"] = gh
+    ck = get_config("chaos_key")
+    if ck:
+        env["CHAOS_KEY"] = ck
+    return env
+
+def _run_script_streaming(cmd: List[str], job: "Job", env: Dict[str, str],
+                          src: str, timeout: int = 3600) -> int:
+    """Spawn a phase script, streaming merged stdout+stderr to job.log() line by
+    line (the scripts log to stderr). Honors cancel/pause/timeout via Job."""
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, bufsize=1, env=env, cwd=_BASE)
+    except FileNotFoundError:
+        job.log(f"{cmd[0]}: not found (is bash on PATH?)", src, "ERROR")
+        return -1
+    except Exception as e:
+        job.log(f"spawn failed: {e}", src, "ERROR")
+        return -1
+
+    def _pump():
+        try:
+            for line in proc.stdout:
+                line = line.rstrip("\n")
+                if line:
+                    job.log(line, src)
+        except Exception:
+            pass
+
+    pumper = threading.Thread(target=_pump, daemon=True, name=f"phaselog-{job.id}")
+    pumper.start()
+    deadline = time.time() + timeout
+    while proc.poll() is None:
+        if job.cancel_event.is_set():
+            proc.kill(); break
+        while job.pause_event.is_set():
+            if job.cancel_event.is_set():
+                proc.kill(); break
+            time.sleep(0.4)
+        if time.time() > deadline:
+            job.log(f"timeout after {timeout}s", src, "WARNING")
+            proc.kill(); break
+        time.sleep(0.3)
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        pass
+    pumper.join(timeout=2)
+    return proc.returncode if proc.returncode is not None else -1
+
+def _ingest_subs_file(domain: str, path: str) -> int:
+    if not os.path.isfile(path):
+        return 0
+    db = get_db()
+    before = db.total_changes
+    subs: Set[str] = set()
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            s = line.strip().lower().lstrip(".")
+            if s and (s == domain or s.endswith("." + domain)):
+                subs.add(s)
+    for s in subs:
+        db.execute("INSERT OR IGNORE INTO subdomains(domain,subdomain) VALUES(?,?)", (domain, s))
+    db.commit()
+    return db.total_changes - before
+
+def _ingest_httpx_jsonl(domain: str, path: str) -> int:
+    if not os.path.isfile(path):
+        return 0
+    db = get_db()
+    live = 0
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            url = e.get("url") or e.get("input") or ""
+            host = re.sub(r"^https?://", "", url).split("/")[0].split(":")[0].lower()
+            if not host or not (host == domain or host.endswith("." + domain)):
+                continue
+            status = e.get("status_code") or e.get("status")
+            title = e.get("title", "")
+            tech = json.dumps(e.get("tech") or e.get("technologies") or [])
+            db.execute("INSERT OR IGNORE INTO subdomains(domain,subdomain) VALUES(?,?)", (domain, host))
+            db.execute("UPDATE subdomains SET http_status=?, http_title=?, http_technologies=?, "
+                       "updated_at=datetime('now') WHERE domain=? AND subdomain=?",
+                       (status, title, tech, domain, host))
+            live += 1
+    db.commit()
+    return live
+
+def _ingest_nuclei_dir(domain: str, run_dir: str) -> int:
+    """Mark hosts that nuclei flagged as interesting. Reads any *.jsonl in the
+    phase dir (filename varies); counts result lines."""
+    if not os.path.isdir(run_dir):
+        return 0
+    db = get_db()
+    findings = 0
+    for fn in os.listdir(run_dir):
+        if not fn.endswith(".jsonl"):
+            continue
+        with open(os.path.join(run_dir, fn), "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                host = (e.get("host") or e.get("matched-at") or e.get("matched_at") or "")
+                host = re.sub(r"^https?://", "", host).split("/")[0].split(":")[0].lower()
+                if host and (host == domain or host.endswith("." + domain)):
+                    db.execute("UPDATE subdomains SET interesting=1, updated_at=datetime('now') "
+                               "WHERE domain=? AND subdomain=?", (domain, host))
+                findings += 1
+    db.commit()
+    return findings
+
+def _ingest_phase(job: "Job", phase: Dict[str, Any], run_dir: str) -> Optional[int]:
+    kind = phase.get("ingest")
+    if not kind:
+        return None
+    try:
+        if kind == "subs":
+            return _ingest_subs_file(job.domain, os.path.join(run_dir, "subs.txt"))
+        if kind == "resolved":
+            return _ingest_subs_file(job.domain, os.path.join(run_dir, "resolved.txt"))
+        if kind == "httpx":
+            return _ingest_httpx_jsonl(job.domain, os.path.join(run_dir, "httpx.jsonl"))
+        if kind == "nuclei":
+            return _ingest_nuclei_dir(job.domain, run_dir)
+    except Exception as e:
+        job.log(f"ingest failed: {e}", "pipeline", "WARNING")
+    return None
+
+def _set_phase_status(target: str, phase_id: str, **fields) -> None:
+    with _lock:
+        _phase_status.setdefault(target, {}).setdefault(phase_id, {}).update(fields)
+
+def _finalize_phase_job(job: "Job", status: str) -> None:
+    """Light finalize for a phase job: record completion + drop from the active
+    map, without the pipeline-only vault/monitor hooks in _complete_job."""
+    job.status = status
+    job.completed_at = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    n = (db_row("SELECT COUNT(*) as c FROM subdomains WHERE domain=?", (job.domain,)) or {"c": 0})["c"]
+    db_exec("INSERT INTO completed_jobs(job_id,domain,username,started_at,completed_at,status,subdomain_count) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (job.id, job.domain, job.username, job.started_at, job.completed_at, status, n))
+    with _lock:
+        _jobs.pop(job.id, None)
+
+def run_phase_job(job: "Job") -> None:
+    """Execute one kill-chain phase script as a job (dispatched when the job has
+    an options['phase'])."""
+    phase = _PHASE_BY_ID.get(job.options.get("phase"))
+    job.status = "running"
+    job.started_at = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    if not phase:
+        job.log(f"unknown phase: {job.options.get('phase')}", "pipeline", "ERROR")
+        return _finalize_phase_job(job, "failed")
+    _set_phase_status(job.domain, phase["id"], status="running", job_id=job.id)
+    try:
+        db_exec("INSERT OR IGNORE INTO targets(domain) VALUES(?)", (job.domain,))
+        script = os.path.join(_RECON_SCRIPTS_DIR, phase["script"])
+        if not os.path.isfile(script):
+            job.log(f"script not found: {script}", "pipeline", "ERROR")
+            _set_phase_status(job.domain, phase["id"], status="failed", job_id=job.id,
+                              logs=job.get_logs())
+            return _finalize_phase_job(job, "failed")
+        ds = job.options.get("datestamp") or _run_datestamp(job.domain)
+        env = _phase_env(job.domain, ds)
+        job.current_step = phase["id"]
+        job.log(f"▶ phase {phase['num']} · {phase['label']} · target {job.domain}", "pipeline")
+        job.log(f"scope_file={env.get('SCOPE_FILE','(none)')} "
+                f"out={env['RECONFORGE_OUTPUT_DIR']}/{job.domain}/{ds} "
+                f"threads={env['THREADS']} rate={env['RATE_LIMIT_RPS']}", "pipeline")
+        rc = _run_script_streaming(["bash", script], job, env, phase["id"],
+                                   timeout=int(get_config("phase_timeout", 3600) or 3600))
+        cancelled = job.cancel_event.is_set()
+        job.log(f"phase {phase['id']} exited rc={rc}", "pipeline",
+                "INFO" if rc == 0 else "WARNING")
+        added = _ingest_phase(job, phase, _phase_run_dir(job.domain, ds, phase))
+        if added is not None:
+            job.log(f"ingested {added} record(s) into the database", "pipeline")
+        status = "cancelled" if cancelled else ("completed" if rc == 0 else "failed")
+        _set_phase_status(job.domain, phase["id"], status=status, job_id=job.id,
+                          at=job.completed_at, added=(added or 0), logs=job.get_logs())
+        _finalize_phase_job(job, status)
+    except Exception:
+        job.log(f"phase error\n{traceback.format_exc()}", "pipeline", "ERROR")
+        _set_phase_status(job.domain, phase["id"], status="failed", job_id=job.id,
+                          logs=job.get_logs())
+        _finalize_phase_job(job, "failed")
+
+def submit_phase(target: str, phase_id: str, username: str,
+                 fresh: bool = False) -> "Job":
+    """Enqueue a single kill-chain phase for a target. Scope is enforced by the
+    caller (API layer) before this is reached."""
+    ds = _run_datestamp(target, fresh=fresh)
+    job = Job(target, username, {"phase": phase_id, "datestamp": ds})
+    with _lock:
+        _jobs[job.id] = job
+    _pending.put(job)
+    add_history(target, "pipeline", f"phase {phase_id} queued by {username} (job {job.id})")
+    return job
+
 def _dispatcher_worker() -> None:
     while not _shutdown.is_set():
         try:
@@ -2085,8 +2363,9 @@ def _dispatcher_worker() -> None:
                     with _lock:
                         _jobs.pop(job.id, None)
                     continue
+                runner = run_phase_job if job.options.get("phase") else run_pipeline
                 job._thread = threading.Thread(
-                    target=run_pipeline, args=(job,),
+                    target=runner, args=(job,),
                     daemon=True, name=f"pipeline-{job.id}")
                 job._thread.start()
             else:
@@ -2434,6 +2713,11 @@ class ReconHandler(BaseHTTPRequestHandler):
         # scope (active program)
         if path == "/api/scope":
             return self._api_scope_get()
+        # pipeline (shell kill-chain phases)
+        if path == "/api/pipeline/logs":
+            return self._api_pipeline_logs(qs)
+        if path == "/api/pipeline":
+            return self._api_pipeline_get(qs)
         # config / history / logs
         if path == "/api/config":
             return self._api_config_get()
@@ -2482,6 +2766,8 @@ class ReconHandler(BaseHTTPRequestHandler):
             return self._api_jobs_create(session)
         if path == "/api/scope":
             return self._api_scope_save(session)
+        if path == "/api/pipeline/run":
+            return self._api_pipeline_run(session)
         m = re.match(r"^/api/jobs/([a-f0-9]+)/(pause|resume|cancel|skip-step)$", path)
         if m:
             return self._api_job_action(m.group(1), m.group(2), session)
@@ -2899,6 +3185,70 @@ class ReconHandler(BaseHTTPRequestHandler):
              f"({len(prog['in_scope'])} in-scope, {len(prog['out_of_scope'])} out)",
              "INFO", "scope_guard")
         self._ok({"program": prog, "active_program": rel}, "Scope saved & enforced")
+
+    # ── API: pipeline (shell kill-chain phases) ──────────────
+    def _api_pipeline_get(self, qs: Dict) -> None:
+        target = (qs.get("target", [None])[0] or "").strip().lower()
+        with _lock:
+            st = dict(_phase_status.get(target, {})) if target else {}
+            running = {j.options.get("phase"): j.id for j in _jobs.values()
+                       if j.options.get("phase") and j.domain == target}
+        ds = _phase_runs.get(target) if target else None
+        phases = []
+        for p in PIPELINE_PHASES:
+            s = st.get(p["id"], {})
+            is_running = p["id"] in running
+            phases.append({
+                "id": p["id"], "num": p["num"], "label": p["label"],
+                "risk": p["risk"], "tools": p["tools"], "ingests": bool(p.get("ingest")),
+                "status": "running" if is_running else s.get("status"),
+                "job_id": running.get(p["id"]) or s.get("job_id"),
+                "added": s.get("added"), "at": s.get("at"),
+            })
+        self._ok({
+            "phases": phases,
+            "target": target or None,
+            "datestamp": ds,
+            "run_dir": (os.path.join(_phase_out_root(), target, ds) if (target and ds) else None),
+            "scope_active": bool(get_config("active_program")),
+        })
+
+    def _api_pipeline_logs(self, qs: Dict) -> None:
+        """Logs for a phase by target+phase — works while running (live job) and
+        after completion (stashed in _phase_status, since the job is popped from
+        _jobs on finalize)."""
+        target = (qs.get("target", [None])[0] or "").strip().lower()
+        phase = (qs.get("phase", [None])[0] or "").strip()
+        if not target or phase not in _PHASE_BY_ID:
+            return self._err("target and a valid phase are required")
+        with _lock:
+            job = next((j for j in _jobs.values()
+                        if j.options.get("phase") == phase and j.domain == target), None)
+            stored = dict(_phase_status.get(target, {}).get(phase, {}))
+        logs = job.get_logs() if job else (stored.get("logs") or [])
+        status = job.status if job else stored.get("status")
+        self._ok({"phase": phase, "logs": logs, "status": status})
+
+    def _api_pipeline_run(self, session: Dict) -> None:
+        body = self._body_json() or {}
+        target = (body.get("target") or "").strip().lower()
+        phase_id = (body.get("phase") or "").strip()
+        if not target:
+            return self._err("target is required")
+        if phase_id not in _PHASE_BY_ID:
+            return self._err(f"unknown phase: {phase_id}")
+        # Scope Guard (doctrine: gate before any tool spawns). The phase script
+        # also checks SCOPE_FILE, but refuse here so we never even enqueue.
+        prog = _active_program()
+        if prog is not None:
+            res = scope_guard.check(target, prog)
+            if not res.get("allowed"):
+                add_history(target, "scope_guard",
+                            f"phase {phase_id} REFUSED: {res.get('reason')}")
+                return self._err(f"out of scope: {res.get('reason')}", 403)
+        job = submit_phase(target, phase_id, session["username"], fresh=bool(body.get("fresh")))
+        self._ok({"job_id": job.id, "phase": phase_id,
+                  "datestamp": job.options.get("datestamp")}, f"phase {phase_id} queued")
 
     # ── API: history / logs ──────────────────────────────────
     def _api_history(self, qs: Dict) -> None:
