@@ -34,28 +34,31 @@ should_run() {
     return 0
 }
 
+# Quoted string tokens — these are filename stems (matching NN-name.sh on
+# disk), not numbers. Quoting keeps the zero-padded "08"/"09" from being read
+# as invalid octal literals by linters or any arithmetic context.
 PHASES=(
-    00-scope-check
-    01-passive-enum
-    02-resolve
-    03-tls-cdn
-    04-port-scan
-    05-http-probe
-    06-crawl
-    07-js-analyze
-    08-content-discovery
-    09-archive-urls
-    10-param-discovery
-    11-pattern-filter
-    12-payload-replace
-    13-oob-callback
-    14-vuln-scan
-    15-xss-targeted
-    16-crlf
-    17-sqli
-    18-screenshot
-    19-secrets
-    20-alert
+    "00-scope-check"
+    "01-passive-enum"
+    "02-resolve"
+    "03-tls-cdn"
+    "04-port-scan"
+    "05-http-probe"
+    "06-crawl"
+    "07-js-analyze"
+    "08-content-discovery"
+    "09-archive-urls"
+    "10-param-discovery"
+    "11-pattern-filter"
+    "12-payload-replace"
+    "13-oob-callback"
+    "14-vuln-scan"
+    "15-xss-targeted"
+    "16-crlf"
+    "17-sqli"
+    "18-screenshot"
+    "19-secrets"
+    "20-alert"
 )
 
 for phase in "${PHASES[@]}"; do
