@@ -42,6 +42,14 @@ const state = {
     // ── [agent: toolchain] ── caches for the Toolchain + Workflows pages.
     toolchain:      null,              // { tools, summary, plan, human, loaded } from /api/v2/tools/*
     workflows:      null,              // { list, expanded, detail } from /api/v2/workflows
+    // ── [agent: findings] ── findings board state (consumes /api/v2)
+    // slug:    resolved active program slug (null until ensureFindings runs)
+    // board:   last findings_board payload {columns,counts,total,program_slug}
+    // detail:  expanded finding_detail_v2 payload, or null
+    // detailId/loadingDetail: which card is open / its in-flight id
+    // status:  "idle" | "loading" | "ready" | "noprogram" | "error"
+    findings:       { slug: null, board: null, detail: null, detailId: null,
+                      loadingDetail: null, status: "idle", error: null },
 };
 
 const LS = {
@@ -262,6 +270,7 @@ function handleRouteChange() {
     renderWorkspace();
     if (route === "settings") ensureConfig();
     if (route === "surface")  ensureSurface();
+    if (route === "findings") ensureFindings();   // ── [agent: findings] ──
     if (route === "scope")    ensureScope();
     if (route === "toolchain") ensureToolchain();   // ── [agent: toolchain] ──
     if (route === "workflows") ensureWorkflows();    // ── [agent: toolchain] ──
@@ -700,13 +709,426 @@ PAGES.exposure = function () { return renderMethodologyPage("exposure", "Sensiti
     { label: "archive interesting files", cmd: `gau ${tgt()} | grep -iE "\\.(env|bak|sql|tar\\.gz|7z|backup|secret|config|log)$" > interesting.txt`, risk: "passive" },
 ]); };
 
+// ── [agent: findings] ─────────────────────────────────────────────
+// Findings board — consumes the /api/v2 findings API. The page itself is a
+// PURE render over state.findings (loaded by ensureFindings); status enum +
+// transitions come from the backend (core/findings.py) via finding_detail_v2,
+// never invented here.
+const FINDINGS_COLUMNS = [
+    // Canonical Kanban order from core/findings.py KANBAN_COLUMNS, plus the
+    // analyst-flagged "dup" bucket the board tracks separately.
+    { key: "new",            label: "New",            kind: "processing" },
+    { key: "needs_review",   label: "Needs Review",   kind: "processing" },
+    { key: "confirmed",      label: "Confirmed",      kind: "success"    },
+    { key: "draft_ready",    label: "Draft Ready",    kind: "success"    },
+    { key: "submitted",      label: "Submitted",      kind: "success"    },
+    { key: "retesting",      label: "Retesting",      kind: "processing" },
+    { key: "closed",         label: "Closed",         kind: "muted"      },
+    { key: "false_positive", label: "False Positive", kind: "error"      },
+    { key: "dup",            label: "Duplicate",      kind: "muted"      },
+];
+
+function findingStatusLabel(s) {
+    const c = FINDINGS_COLUMNS.find(c => c.key === s);
+    return c ? c.label : String(s || "—").replace(/_/g, " ");
+}
+function findingStatusBadge(s) {
+    const c = FINDINGS_COLUMNS.find(c => c.key === s);
+    return `<span class="badge badge-${c ? c.kind : "muted"}">${escapeHTML(findingStatusLabel(s))}</span>`;
+}
+// CVSS score → severity band (CVSS 3.1/4.0 cutoffs) for the card badge.
+function severityFromCvss(score) {
+    const n = Number(score);
+    if (!isFinite(n) || n <= 0) return { label: "—", kind: "muted" };
+    if (n >= 9.0) return { label: "CRIT " + n.toFixed(1), kind: "error" };
+    if (n >= 7.0) return { label: "HIGH " + n.toFixed(1), kind: "error" };
+    if (n >= 4.0) return { label: "MED " + n.toFixed(1),  kind: "processing" };
+    return { label: "LOW " + n.toFixed(1), kind: "muted" };
+}
+function confidenceBadge(label) {
+    const kind = label === "high" ? "success" : (label === "medium" ? "processing" : "muted");
+    return `<span class="badge badge-${kind}">${escapeHTML((label || "low") + " conf")}</span>`;
+}
+
 PAGES.findings = function () {
+    const f  = state.findings || {};
+    const st = f.status;
+
+    // Empty / transient states — friendly, never throws.
+    if (st === "loading" || st === "idle") {
+        return `
+          ${renderWorkspaceHead("Findings", "Evidence", "Confirmed and in-review findings.")}
+          ${panel("Findings board", `<div class="tbl-empty">Loading findings…</div>`)}
+        `;
+    }
+    if (st === "noprogram") {
+        return `
+          ${renderWorkspaceHead("Findings", "Evidence", "Confirmed and in-review findings.")}
+          ${panel("Findings board", `<div class="tbl-empty">No program selected yet. Define a target + scope on the <span class="mono">Intake</span> / <span class="mono">Scope</span> pages, then findings for that program appear here.</div>`)}
+          ${state.guideMode ? guidePanel("Pipeline", "Findings are filtered to the active program's scope. The board resolves the program slug from your workspace/target (or /api/scope) and reads GET /api/v2/programs/<slug>/findings_board.") : ""}
+        `;
+    }
+    if (st === "error") {
+        return `
+          ${renderWorkspaceHead("Findings", "Evidence", "Confirmed and in-review findings.")}
+          ${panel("Findings board", `
+            <div class="tbl-empty">Couldn't load findings${f.error ? " — " + escapeHTML(f.error) : "."}</div>
+            <div class="findings-actions"><button class="btn btn-sm btn-ghost" onclick="ReconForge.refreshFindings()">↻ Retry</button></div>
+          `)}
+        `;
+    }
+
+    const board   = f.board || {};
+    const columns = board.columns || {};
+    const counts  = board.counts || {};
+    const total   = board.total || 0;
+    const slug    = f.slug || board.program_slug || "—";
+
+    // Summary metrics: total + a count per non-empty status column.
+    const metrics = [{ label: "Total", value: total, kind: total ? "success" : "" }];
+    FINDINGS_COLUMNS.forEach(c => {
+        const n = counts[c.key] || 0;
+        if (n) metrics.push({ label: c.label, value: n, kind: c.kind === "muted" ? "" : c.kind });
+    });
+
+    let boardHTML;
+    if (!total) {
+        boardHTML = `<div class="tbl-empty">No findings for <span class="mono">${escapeHTML(slug)}</span> yet. They'll appear here as the pipeline + agent layer produce them.</div>`;
+    } else {
+        // One section per status column that has cards. Columns with a count
+        // but no cards (truncated by limit_per_column) still show a header.
+        boardHTML = `<div class="findings-board">` + FINDINGS_COLUMNS.map(c => {
+            const cards = Array.isArray(columns[c.key]) ? columns[c.key] : [];
+            const n = counts[c.key] || 0;
+            if (!n && !cards.length) return "";
+            return `
+              <section class="findings-col">
+                <div class="findings-col-head">
+                  <span class="findings-col-title">${escapeHTML(c.label)}</span>
+                  <span class="badge badge-${c.kind}">${n}</span>
+                </div>
+                ${cards.length
+                    ? cards.map(renderFindingCard).join("")
+                    : `<div class="findings-col-empty">${n} hidden (limit)</div>`}
+              </section>`;
+        }).join("") + `</div>`;
+    }
+
     return `
-      ${renderWorkspaceHead("Findings", "Evidence", "Confirmed and in-review submissions.")}
-      ${panel("Findings board", `<div class="tbl-empty">No findings yet. They'll appear here as the agent layer + report scripts produce them.</div>`)}
-      ${state.guideMode ? guidePanel("Pipeline", "Confirmed findings flow: scripts/vuln/* -> /api/v2 findings -> this board -> scripts/report/draft-report.sh -> vault export. Status moves through draft -> review -> submitted -> triaged.") : ""}
+      ${renderWorkspaceHead("Findings", "Evidence", "Findings for " + escapeHTML(slug) + " — grouped by triage status.")}
+      ${renderMetrics(metrics)}
+      ${panel(`Findings board · ${escapeHTML(slug)}`, `
+        <div class="findings-actions">
+          <button class="btn btn-sm btn-ghost" onclick="ReconForge.refreshFindings()">↻ Refresh</button>
+        </div>
+        ${boardHTML}
+      `)}
+      ${state.guideMode ? guidePanel("Pipeline", "Confirmed findings flow: pipeline/agents -> /api/v2 findings -> this board. Select a card to inspect evidence + change status. Status moves new -> needs_review -> confirmed -> draft_ready -> submitted -> closed.") : ""}
     `;
 };
+
+// One finding card. When this card is the selected one, its detail panel
+// (finding_detail_v2 + evidence + status controls) renders inline beneath it.
+function renderFindingCard(card) {
+    if (!card) return "";
+    const id   = card.id;
+    const open = state.findings && state.findings.detailId === id;
+    const sev  = severityFromCvss(card.cvss_score);
+    const bounty = card.bounty_estimate_usd
+        ? `<span class="finding-bounty">$${escapeHTML(String(card.bounty_estimate_usd))}</span>` : "";
+    const drafts = card.draft_count
+        ? `<span class="badge badge-muted">${card.draft_count} draft${card.draft_count === 1 ? "" : "s"}</span>` : "";
+    return `
+      <div class="finding-card ${open ? "open" : ""}" onclick="ReconForge.selectFinding(${id})">
+        <div class="finding-card-top">
+          <span class="badge badge-${sev.kind}">${escapeHTML(sev.label)}</span>
+          ${card.vuln_class ? `<span class="finding-vclass mono">${escapeHTML(card.vuln_class)}</span>` : ""}
+          ${bounty}
+        </div>
+        <div class="finding-title">${escapeHTML(card.title || ("Finding #" + id))}</div>
+        <div class="finding-card-meta">
+          ${card.domain ? `<span class="mono finding-asset">${escapeHTML(card.domain)}</span>` : ""}
+          ${confidenceBadge(card.confidence_label)}
+          ${drafts}
+        </div>
+      </div>
+      ${open ? renderFindingDetail(id) : ""}
+    `;
+}
+
+// Inline detail + evidence panel for the selected finding.
+function renderFindingDetail(id) {
+    const f = state.findings || {};
+    if (f.loadingDetail === id && (!f.detail || f.detail.id !== id)) {
+        return `<div class="finding-detail"><div class="tbl-empty">Loading finding #${id}…</div></div>`;
+    }
+    const d = f.detail;
+    if (!d || d.id !== id) {
+        return `<div class="finding-detail"><div class="tbl-empty">Detail unavailable.
+          <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation(); ReconForge.selectFinding(${id})">↻ Retry</button></div></div>`;
+    }
+
+    // Status controls: forward transitions are surfaced as primary buttons;
+    // the full allowed set (minus current) is offered for overrides. Both
+    // come straight from the backend enum — nothing invented client-side.
+    const cur      = d.status;
+    const forward  = Array.isArray(d.forward_transitions) ? d.forward_transitions : [];
+    const allowed  = Array.isArray(d.valid_statuses) ? d.valid_statuses : [];
+    const others   = allowed.filter(s => s !== cur && forward.indexOf(s) === -1);
+    const fwdBtns  = forward.map(s =>
+        `<button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); ReconForge.setFindingStatus(${id}, '${escapeAttr(s)}')">→ ${escapeHTML(findingStatusLabel(s))}</button>`
+    ).join("");
+    const otherBtns = others.map(s =>
+        `<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation(); ReconForge.setFindingStatus(${id}, '${escapeAttr(s)}')">${escapeHTML(findingStatusLabel(s))}</button>`
+    ).join("");
+
+    return `
+      <div class="finding-detail" onclick="event.stopPropagation();">
+        <div class="finding-detail-head">
+          <div>
+            <span class="finding-detail-id mono">#${id}${d.bug_id ? " · " + escapeHTML(d.bug_id) : ""}</span>
+            ${findingStatusBadge(cur)}
+          </div>
+          <button class="btn btn-sm btn-ghost" onclick="ReconForge.closeFinding()">✕ Close</button>
+        </div>
+        <div class="finding-detail-grid">
+          <div><span class="kv-k">Vuln class</span><span class="kv-v mono">${escapeHTML(d.vuln_class || "—")}</span></div>
+          <div><span class="kv-k">Asset</span><span class="kv-v mono">${escapeHTML(d.domain || "—")}</span></div>
+          <div><span class="kv-k">CVSS</span><span class="kv-v">${d.cvss_score != null ? escapeHTML(String(d.cvss_score)) : "—"}${d.cvss_vector ? ` <span class="mono text-sec">${escapeHTML(d.cvss_vector)}</span>` : ""}</span></div>
+          <div><span class="kv-k">Bounty est.</span><span class="kv-v">${d.bounty_estimate_usd ? "$" + escapeHTML(String(d.bounty_estimate_usd)) : "—"}</span></div>
+        </div>
+        ${d.description ? `<div class="finding-desc">${escapeHTML(d.description)}</div>` : ""}
+        <div class="finding-status-controls">
+          <span class="kv-k">Set status</span>
+          <div class="finding-status-btns">${fwdBtns || ""}${otherBtns || ""}${(!fwdBtns && !otherBtns) ? `<span class="text-sec">terminal state</span>` : ""}</div>
+        </div>
+        ${renderFindingEvidence(id, d.evidence, d.readiness)}
+      </div>
+    `;
+}
+
+// Evidence bands (observed / inferred / ai_hypothesis / verified). Only
+// ai_hypothesis rows get a verify action — matches core/evidence.py rules.
+function renderFindingEvidence(id, evidence, readiness) {
+    const ev = evidence || {};
+    const bands = [
+        { key: "observed",      label: "Observed",      kind: "success"    },
+        { key: "inferred",      label: "Inferred",      kind: "processing" },
+        { key: "ai_hypothesis", label: "AI Hypothesis", kind: "error"      },
+        { key: "verified",      label: "Verified",      kind: "success"    },
+    ];
+    const total = bands.reduce((n, b) => n + (Array.isArray(ev[b.key]) ? ev[b.key].length : 0), 0);
+
+    let readyHTML = "";
+    if (readiness && typeof readiness === "object") {
+        const labels = {
+            affected_url: "Affected URL", reproduction_steps: "Repro steps",
+            impact: "Impact", remediation: "Remediation", screenshot: "Screenshot",
+        };
+        const keys = Object.keys(readiness);
+        if (keys.length) {
+            readyHTML = `<div class="evidence-readiness">` + keys.map(k => {
+                const ok = !!readiness[k];
+                return `<span class="rdy ${ok ? "ok" : "no"}">${ok ? "✓" : "✗"} ${escapeHTML(labels[k] || k)}</span>`;
+            }).join("") + `</div>`;
+        }
+    }
+
+    let bodyHTML;
+    if (!total) {
+        bodyHTML = `<div class="tbl-empty">No structured evidence recorded yet.</div>`;
+    } else {
+        bodyHTML = bands.map(b => {
+            const rows = Array.isArray(ev[b.key]) ? ev[b.key] : [];
+            if (!rows.length) return "";
+            return `
+              <div class="evidence-band" data-src="${b.key}">
+                <div class="evidence-band-head"><span class="badge badge-${b.kind}">${escapeHTML(b.label)}</span><span class="text-sec">${rows.length}</span></div>
+                ${rows.map(r => renderEvidenceRow(id, b.key, r)).join("")}
+              </div>`;
+        }).join("");
+    }
+    return `
+      <div class="finding-evidence">
+        <div class="finding-evidence-head"><span class="kv-k">Evidence</span>${readyHTML}</div>
+        ${bodyHTML}
+      </div>
+    `;
+}
+
+function renderEvidenceRow(findingId, source, row) {
+    if (!row) return "";
+    let val = row.value;
+    if (val != null && typeof val === "object") {
+        try { val = JSON.stringify(val); } catch (_) { val = String(val); }
+    }
+    const verified = source === "verified" || !!row.verified_by;
+    // Only ai_hypothesis rows are promotable to verified (core/evidence.py).
+    const canVerify = source === "ai_hypothesis";
+    return `
+      <div class="evidence-row">
+        <div class="evidence-row-main">
+          <span class="evidence-key mono">${escapeHTML(row.key || "—")}</span>
+          <span class="evidence-val mono">${escapeHTML(val == null ? "" : String(val))}</span>
+        </div>
+        <div class="evidence-row-side">
+          ${verified && row.verified_by ? `<span class="badge badge-success">✓ ${escapeHTML(row.verified_by)}</span>` : ""}
+          ${canVerify ? `<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation(); ReconForge.verifyFindingEvidence(${findingId}, ${row.id})">Verify</button>` : ""}
+        </div>
+      </div>
+    `;
+}
+
+// Resolve the active program slug, then load its findings board.
+// Slug resolution order: (1) match a program from /api/v2/programs against
+// workspace/target/program; (2) fall back to /api/scope program name +
+// slugify (same regex as core/programs.slugify).
+async function ensureFindings() {
+    const f = state.findings;
+    f.status = "loading";
+    if (currentRoute() === "findings") renderWorkspace();
+
+    const slug = await resolveProgramSlug();
+    if (!slug) {
+        f.slug = null; f.board = null; f.status = "noprogram";
+        if (currentRoute() === "findings") renderWorkspace();
+        return;
+    }
+    f.slug = slug;
+    const r = await api("GET", "/api/v2/programs/" + encodeURIComponent(slug) + "/findings_board");
+    // v2 endpoints return the payload at the top level (no _ok data.data wrap).
+    if (r.ok && r.data && r.data.columns) {
+        f.board = r.data; f.status = "ready"; f.error = null;
+    } else if (r.status === 404) {
+        // Program slug didn't resolve server-side — treat as no-program.
+        f.board = null; f.status = "noprogram";
+    } else {
+        f.board = null; f.status = "error";
+        f.error = (r.data && r.data.error) || ("HTTP " + r.status);
+    }
+    if (currentRoute() === "findings") renderWorkspace();
+}
+
+// Slugify identical to core/programs.slugify: lowercase, non-[a-z0-9-] runs
+// → "-", trim leading/trailing "-".
+function slugifyName(name) {
+    const s = String(name || "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+    return s || "program";
+}
+
+async function resolveProgramSlug() {
+    // Candidate names from current engagement state.
+    const wantNames = [state.workspace, state.program, (state.scope && state.scope.program), state.target]
+        .filter(Boolean).map(s => String(s).toLowerCase());
+    const wantSlugs = wantNames.map(slugifyName);
+
+    const r = await api("GET", "/api/v2/programs");
+    const list = (r.ok && r.data && Array.isArray(r.data.programs)) ? r.data.programs : [];
+    if (list.length) {
+        // 1. Exact slug match, then name match, against our candidates.
+        for (const p of list) {
+            const pslug = (p.slug || "").toLowerCase();
+            const pname = (p.name || "").toLowerCase();
+            if (wantSlugs.indexOf(pslug) !== -1) return p.slug;
+            if (wantNames.indexOf(pname) !== -1) return p.slug;
+            if (wantSlugs.indexOf(slugifyName(pname)) !== -1) return p.slug;
+        }
+        // 2. No engagement context but exactly one program exists → use it.
+        if (!wantNames.length && list.length === 1) return list[0].slug;
+    }
+
+    // 3. Fall back to /api/scope program name (this is _ok-wrapped → data.data).
+    const sc = await api("GET", "/api/scope");
+    const scd = (sc.ok && sc.data) ? (sc.data.data || sc.data) : null;
+    const progName = scd && scd.program && scd.program.name;
+    if (progName) {
+        const slug = slugifyName(progName);
+        // Prefer an actual program row whose slug matches, else return the
+        // slugified name (findings_board 404s cleanly if it doesn't exist).
+        const hit = list.find(p => (p.slug || "").toLowerCase() === slug);
+        return hit ? hit.slug : slug;
+    }
+    return null;
+}
+
+function refreshFindings() {
+    const f = state.findings;
+    f.board = null; f.detail = null; f.detailId = null;
+    f.status = "loading";
+    renderWorkspace();
+    ensureFindings();
+}
+
+// Select a finding card → load finding_detail_v2 (bundles evidence + taxonomy
+// + valid_statuses + forward_transitions in one round-trip).
+async function selectFinding(id) {
+    const f = state.findings;
+    if (f.detailId === id && f.detail && f.detail.id === id) return;  // already open
+    f.detailId = id; f.loadingDetail = id; f.detail = null;
+    renderWorkspace();
+    const r = await api("GET", "/api/v2/findings/" + encodeURIComponent(id));
+    // Guard against a race: operator clicked another card while this loaded.
+    if (state.findings.detailId !== id) return;
+    f.loadingDetail = null;
+    if (r.ok && r.data && r.data.id != null) {
+        f.detail = r.data;
+    } else {
+        f.detail = null;
+        toast("Couldn't load finding #" + id + ".", "error");
+    }
+    renderWorkspace();
+}
+
+function closeFinding() {
+    const f = state.findings;
+    f.detail = null; f.detailId = null; f.loadingDetail = null;
+    renderWorkspace();
+}
+
+// POST a status change, then refresh both the detail and the board so the
+// card moves to its new column.
+async function setFindingStatus(id, status) {
+    const r = await api("POST", "/api/v2/findings/" + encodeURIComponent(id) + "/status",
+                        { status, operator: state.user || "operator" });
+    if (r.ok && r.data && r.data.ok) {
+        consoleLog("success", "finding #" + id + " status: " + (r.data.from || "?") + " → " + status);
+        toast("Status updated → " + findingStatusLabel(status), "success");
+        // Refresh the board (re-buckets the card) and re-open this finding.
+        const f = state.findings;
+        if (f.slug) {
+            const br = await api("GET", "/api/v2/programs/" + encodeURIComponent(f.slug) + "/findings_board");
+            if (br.ok && br.data && br.data.columns) f.board = br.data;
+        }
+        const dr = await api("GET", "/api/v2/findings/" + encodeURIComponent(id));
+        if (dr.ok && dr.data && dr.data.id != null && f.detailId === id) f.detail = dr.data;
+        renderWorkspace();
+    } else {
+        const msg = (r.data && r.data.error) || ("HTTP " + r.status);
+        consoleLog("error", "status change failed for #" + id + ": " + msg);
+        toast("Status change rejected: " + msg, "error");
+    }
+}
+
+// Promote an ai_hypothesis evidence row to verified, then refresh the detail.
+async function verifyFindingEvidence(findingId, evidenceId) {
+    const r = await api("POST",
+        "/api/v2/findings/" + encodeURIComponent(findingId) + "/evidence/" + encodeURIComponent(evidenceId) + "/verify",
+        { operator: state.user || "operator" });
+    if (r.ok && r.data && r.data.ok) {
+        consoleLog("success", "evidence #" + evidenceId + " verified on finding #" + findingId);
+        toast("Evidence verified.", "success");
+        const dr = await api("GET", "/api/v2/findings/" + encodeURIComponent(findingId));
+        if (dr.ok && dr.data && dr.data.id != null && state.findings.detailId === findingId) {
+            state.findings.detail = dr.data;
+        }
+        renderWorkspace();
+    } else {
+        const msg = (r.data && r.data.error) || ("HTTP " + r.status);
+        consoleLog("error", "verify failed: " + msg);
+        toast("Verify failed: " + msg, "error");
+    }
+}
+// ── [agent: findings] ── end
 
 PAGES.notes = function () {
     const notes = LS.get(wsKey("notes"), "") || "";
@@ -2371,6 +2793,8 @@ window.ReconForge = {
     copySaved, removeSaved,
     // notes
     saveNotes, copyNotes, clearNotes,
+    // ── [agent: findings] ── findings board handlers
+    refreshFindings, selectFinding, closeFinding, setFindingStatus, verifyFindingEvidence,
     toast,
 };
 
