@@ -178,7 +178,7 @@ Scope rules to remember:
 
 ## Configure OPSEC Defaults
 
-Open `Operations -> Settings` and review the OPSEC panel before active scans.
+Open `Admin -> Settings` and review the OPSEC panel before active scans.
 
 Recommended starting values:
 
@@ -241,7 +241,7 @@ ReconForge has two vault-related paths:
 | Vault root | Your notes vault root, usually set in the wizard or UI |
 | `reconforge_output_dir` | Contract output directory, defaults to `./out/` |
 
-Set or update them in `Operations -> Settings`, or edit:
+Set or update them in `Admin -> Settings`, or edit:
 
 ```text
 ~/.config/reconforge/settings.json
