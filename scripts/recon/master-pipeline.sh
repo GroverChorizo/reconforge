@@ -73,8 +73,11 @@ for phase in "${PHASES[@]}"; do
         continue
     fi
     log INFO "═══ $phase ═══"
-    if ! "$script"; then
-        rc=$?
+    # Capture the phase's real exit code. `if ! "$script"` would only ever see
+    # the status of the negation (always 0), so the scope-refusal abort below
+    # never fired and every failure was misreported as rc=0.
+    "$script"; rc=$?
+    if [ "$rc" -ne 0 ]; then
         # Scope failure (3) is fatal; tool/input failures (4, 5) are skippable
         if [ "$rc" -eq 3 ]; then
             log ERR "scope refused — aborting master pipeline"
