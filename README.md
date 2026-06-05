@@ -16,13 +16,19 @@ internal security work where you have explicit permission to test.
 
 ## What You Get
 
-- A browser-based recon console at `http://127.0.0.1:8342/`.
+- A browser-based recon console at `http://127.0.0.1:8342/` (binds loopback by default).
 - First-run setup wizard for handles, API keys, tool detection, and vault path.
-- Scope-aware scan submission with local SQLite storage.
+- Scope-aware scan submission with local SQLite storage; declared scope is
+  enforced by `scope_guard` on every job and tool dispatch.
 - OPSEC defaults for target-touching tools: rate limits, optional proxy, jitter,
   random User-Agent, and platform identity headers.
-- Passive, active, URL, JavaScript, parameter, vuln-triage, evidence, and report
-  workflow cards.
+- An app-driven **kill-chain pipeline**: run the `scripts/recon/NN-*.sh` phases
+  from the UI with live logs and results ingested back into the database.
+- A **six-agent AI pipeline** (Scope Guard → Strategist → Recon → Hunter →
+  Analyst → Reporter) with a switchable backend — Claude API or local Ollama —
+  and a per-run cost cap.
+- Editable command builders (Passive, Active, URL, JS, parameter, vuln-triage),
+  a findings board, tool-health view, evidence, and report workflow cards.
 - Continuous monitoring with adaptive cadence for enrolled targets.
 - Notes-vault-friendly contract output and report archive paths.
 
@@ -48,7 +54,7 @@ Optional but useful:
 ### Local Python
 
 ```bash
-git clone https://github.com/example-org/reconforge.git
+git clone https://github.com/GroverChorizo/reconforge.git
 cd reconforge
 python3 -m venv .venv
 source .venv/bin/activate
@@ -59,7 +65,7 @@ python main.py
 On Windows PowerShell:
 
 ```powershell
-git clone https://github.com/example-org/reconforge.git
+git clone https://github.com/GroverChorizo/reconforge.git
 cd reconforge
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -310,13 +316,22 @@ pytest -q
 
 ## Safety Model
 
-- ReconForge is local-first. Do not expose the web UI to the public internet.
-- Keep program scope current before scanning.
-- Start passive, then promote to active only when authorized.
-- Use a proxy when you need raw request visibility.
+- ReconForge is local-first. It **binds `127.0.0.1` by default** — pass
+  `--host 0.0.0.0` only when you deliberately want LAN access, and put it behind
+  your own auth/firewall. Do not expose the web UI to the public internet.
+- **Secrets stay server-side.** API keys and tokens are write-only through the
+  UI: `GET /api/config` is admin-only and returns secrets masked (`********`),
+  never the raw value. Saving a blank key leaves the stored one untouched.
+- **Roles.** Each operator gets their own login. Configuration, user
+  management, backups, and the LLM/agent backend are admin-only. The Anthropic
+  API key is configured per instance by an admin and shared by the agent
+  pipeline; a per-run cost cap (`llm.max_cost_usd`) bounds spend.
+- Keep program scope current before scanning. Start passive, then promote to
+  active only when authorized. Use a proxy when you need raw request visibility.
 - Keep platform identity headers configured for programs that require them.
 - Do not commit `recon_data/`, vault output, API keys, screenshots, or scan
-  artifacts.
+  artifacts. Local config (`~/.config/reconforge/settings.json`) holds your keys
+  and is never committed — keep it `0600`.
 
 ## Status
 

@@ -1429,7 +1429,7 @@ Score: ${scoreLabel} (${sevLabel}). [One sentence justifying each metric choice.
 
 ### Proof of Concept
 \`\`\`
-[payload or request — include X-Intigriti-Username: grover on every target request]
+[payload or request — include your X-Intigriti-Username header on every target request]
 \`\`\`
 
 ## CVSS Score
