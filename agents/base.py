@@ -32,7 +32,8 @@ from typing import Any, Callable, Dict, List, Optional
 # ── pricing table (USD per 1M tokens, input / output) ────────────────
 # Update when Anthropic changes pricing.
 MODEL_PRICES: Dict[str, tuple[float, float]] = {
-    "claude-opus-4-7":          (15.00, 75.00),
+    "claude-opus-4-8":          (15.00, 75.00),
+    "claude-opus-4-7":          (15.00, 75.00),   # kept for back-compat / old runs
     "claude-sonnet-4-6":        ( 3.00, 15.00),
     "claude-haiku-4-5-20251001":( 1.00,  5.00),
     # local models cost nothing
@@ -40,7 +41,7 @@ MODEL_PRICES: Dict[str, tuple[float, float]] = {
 
 # Tier → default model ID (overridable via config).
 DEFAULT_MODELS = {
-    "opus":  "claude-opus-4-7",
+    "opus":  "claude-opus-4-8",
     "haiku": "claude-haiku-4-5-20251001",
 }
 

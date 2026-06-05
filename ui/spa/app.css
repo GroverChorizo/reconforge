@@ -1173,6 +1173,50 @@ kbd {
 .phase-actions { display: flex; gap: 6px; }
 
 /* ════════════════════════════════════════════════════════════════
+   Agents command center (six-agent LLM chain)
+   ════════════════════════════════════════════════════════════════ */
+.agent-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap; padding: 10px 14px; margin-bottom: 10px;
+  background: var(--bg-panel); border: 1px solid var(--border-muted);
+  border-radius: var(--radius); font-size: 12px;
+}
+.agent-cost { font-size: 12px; color: var(--text-secondary); }
+.agent-controls {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.agent-controls select { padding: 6px 10px; }
+.agent-chain {
+  display: flex; flex-direction: column; align-items: stretch;
+  gap: 0; max-width: 640px;
+}
+.agent-node {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-muted);
+  border-left: 3px solid var(--border-muted);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+}
+.agent-node[data-state="running"]   { border-left-color: var(--status-processing); box-shadow: 0 0 0 1px var(--status-processing-soft); }
+.agent-node[data-state="completed"] { border-left-color: var(--status-success); }
+.agent-node[data-state="failed"],
+.agent-node[data-state="degraded"]  { border-left-color: var(--status-error); }
+.agent-node-head { display: flex; align-items: center; gap: 8px; }
+.agent-idx {
+  width: 18px; height: 18px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; color: var(--text-muted);
+  border: 1px solid var(--border-muted); border-radius: 50%;
+}
+.agent-name { font-weight: 600; color: var(--text-primary); flex: 1; }
+.agent-desc { color: var(--text-secondary); font-size: 11.5px; margin-top: 3px; padding-left: 26px; }
+.agent-node-foot { display: flex; align-items: center; gap: 10px; margin-top: 6px; padding-left: 26px; }
+.agent-cost-chip { font-size: 10px; color: var(--status-success); }
+.agent-err { font-size: 10px; color: var(--status-error); font-family: var(--font-mono); }
+.agent-arrow { text-align: center; color: var(--text-muted); font-size: 14px; line-height: 1; padding: 3px 0; }
+
+/* ════════════════════════════════════════════════════════════════
    ── [agent: toolchain] ── Toolchain health + Workflows pages
    ════════════════════════════════════════════════════════════════ */
 

@@ -27,6 +27,10 @@ const state = {
     phaseLog:       { phaseId: null, jobId: null, text: "", open: false },
     pipelinePoll:   null,             // fast log/status poll handle (pipeline page)
     freshNext:      false,            // arm a fresh run timestamp for the next phase
+    // Agentic pipeline (six-agent LLM chain) command center.
+    agents:         { data: null },   // last /api/agent/state response
+    agentLog:       { text: "", open: false },
+    agentPoll:      null,             // fast status/log poll handle (agents page)
     riskMode:       "passive",        // "passive" | "active" | "aggressive"
     // Intake form draft. Bound to every field on the Intake page and updated
     // on each keystroke so a re-render (e.g. selecting a risk mode) never wipes
@@ -76,6 +80,7 @@ const NAV = [
         { route: "scope",       label: "Scope"           },
     ]},
     { id: "recon", title: "Recon", items: [
+        { route: "agents",      label: "AI Agents"       },
         { route: "pipeline",    label: "Run Pipeline"    },
         { route: "workflows",   label: "Workflows"       },   // ── [agent: toolchain] ──
         { route: "passive",     label: "Passive Recon"   },
@@ -225,6 +230,7 @@ async function logout() {
     state.authed = false; state.user = null; state.role = null;
     if (state.pollHandle) { clearInterval(state.pollHandle); state.pollHandle = null; }
     stopPipelinePoll();
+    stopAgentPoll();
     showLogin();
 }
 
@@ -280,10 +286,13 @@ function handleRouteChange() {
     if (route === "workflows") ensureWorkflows();    // ── [agent: toolchain] ──
     if (route === "pipeline") ensurePipeline();
     else                      stopPipelinePoll();
+    if (route === "agents")   ensureAgents();
+    else                      stopAgentPoll();
 }
 
 function routeToPhase(route) {
     if (route === "pipeline") return "pipeline";
+    if (route === "agents")   return "agents";
     for (const step of KILL_CHAIN) {
         if (step.routes.includes(route)) return step.id;
     }
@@ -306,6 +315,7 @@ function phaseLabel(phase) {
         "dashboard":  "mission control",
         "operations": "operations",
         "pipeline":   "kill chain",
+        "agents":     "ai agents",
         "admin":      "admin",
     }[phase] || phase;
 }
@@ -1834,6 +1844,246 @@ PAGES.resources = function () {
     `;
 };
 
+// ── Agents command center (six-agent LLM chain) ──────────────────
+const AGENT_CHAIN_FALLBACK = [
+    { name: "scope_guard", label: "Scope Guard", desc: "Pure-logic scope gate (no LLM call)" },
+    { name: "strategist",  label: "Strategist",  desc: "Ranks scope into an executable attack plan" },
+    { name: "recon",       label: "Recon",       desc: "Drives adaptive tool selection on discoveries" },
+    { name: "hunter",      label: "Hunter",      desc: "Identifies + scores exploitable vuln classes" },
+    { name: "analyst",     label: "Analyst",     desc: "CVSS, bounty estimate, chains, dup detection" },
+    { name: "reporter",    label: "Reporter",    desc: "Drafts platform-ready submissions" },
+];
+const AGENT_MODES = ["passive_recon","active_recon","content_discovery","vuln_triage",
+                     "evidence_collection","report_drafting","retest"];
+
+PAGES.agents = function () {
+    if (!state.target) {
+        return `${renderWorkspaceHead("AI Agents", "Recon", "Run the six-agent LLM chain on your target.")}
+          ${panel("No target loaded", `<div class="tbl-empty">Load a target on <span class="mono">Target → Intake</span> first.</div>`)}`;
+    }
+    return `
+      ${renderWorkspaceHead("AI Agents", "Recon", "ScopeGuard → Strategist → Recon → Hunter → Analyst → Reporter. Live logs + cost below.")}
+      <div id="agent-live">${renderAgentLive()}</div>
+      ${renderAgentLogPanel()}
+      ${renderAgentBackendPanel()}
+      ${state.guideMode ? guidePanel("How this runs", "ScopeGuard is pure logic (no LLM). The other five call your configured backend — Claude API or local Ollama. A per-run cost cap stops new LLM calls once spent; a single agent failing degrades the run instead of aborting it. Findings the agents create show up on the Findings board.") : ""}
+    `;
+};
+
+function renderAgentLive() {
+    const d = state.agents.data || {};
+    const backend = d.backend || "api";
+    const running = !!d.running;
+    const cap = d.cost_cap != null ? d.cost_cap : 5;
+    const cost = d.total_cost || 0;
+    const overall = d.status;
+    const scopeOk = d.scope_active != null ? d.scope_active : !!(state.scope && state.scope.active);
+    const keyBadge = backend === "local"
+        ? `<span class="badge badge-muted">local</span>`
+        : (d.api_key_set ? `<span class="badge badge-success">KEY SET</span>` : `<span class="badge badge-error">NO API KEY</span>`);
+    return `
+      <div class="agent-bar">
+        <div>
+          target <span class="mono text-purple">${escapeHTML(state.target)}</span> ·
+          ${backend === "local" ? `<span class="badge badge-processing">OLLAMA</span>` : `<span class="badge badge-active">CLAUDE API</span>`} ${keyBadge} ·
+          ${scopeOk ? `<span class="badge badge-success">SCOPE ENFORCED</span>` : `<span class="badge badge-error">SCOPE NOT WIRED</span>`}
+          ${overall ? ` · <span class="badge badge-${agentOverallCls(overall)}">${escapeHTML(overall.toUpperCase())}</span>` : ""}
+        </div>
+        <div class="agent-cost">cost <span class="mono">$${(cost || 0).toFixed(4)}</span> <span class="text-mute">/ cap $${(cap || 0).toFixed(2)}</span></div>
+      </div>
+      <div class="agent-controls">
+        <label class="form-label" style="margin:0;">Mode</label>
+        <select id="agent-mode" ${running ? "disabled" : ""}>
+          ${AGENT_MODES.map(m => `<option value="${m}">${m}</option>`).join("")}
+        </select>
+        ${running
+          ? `<button class="btn btn-ghost" disabled>● running…</button>`
+          : `<button class="btn btn-primary" onclick="ReconForge.startAgentRun()">▸ Start agentic run</button>`}
+        <button class="btn btn-ghost btn-sm" onclick="ReconForge.refreshAgents()">↻</button>
+      </div>
+      ${renderAgentChain()}
+    `;
+}
+
+function renderAgentChain() {
+    const d = state.agents.data;
+    const chain = (d && Array.isArray(d.chain) && d.chain.length) ? d.chain : AGENT_CHAIN_FALLBACK;
+    return `<div class="agent-chain">${chain.map((a, i) => `
+      <div class="agent-node" data-state="${a.status || "idle"}">
+        <div class="agent-node-head">
+          <span class="agent-idx mono">${i + 1}</span>
+          <span class="agent-name">${escapeHTML(a.label || a.name)}</span>
+          ${agentStatusBadge(a.status)}
+        </div>
+        <div class="agent-desc">${escapeHTML(a.desc || "")}</div>
+        ${(a.cost || a.error) ? `<div class="agent-node-foot">
+          ${a.cost ? `<span class="agent-cost-chip mono">$${(a.cost || 0).toFixed(4)}</span>` : ""}
+          ${a.error ? `<span class="agent-err" title="${escapeAttr(a.error)}">${escapeHTML(String(a.error).slice(0, 70))}</span>` : ""}
+        </div>` : ""}
+      </div>${i < chain.length - 1 ? `<div class="agent-arrow">↓</div>` : ""}`).join("")}</div>`;
+}
+
+function agentStatusBadge(s) {
+    const map = { running:["processing","RUNNING"], completed:["success","DONE"],
+                  failed:["error","FAILED"], degraded:["error","DEGRADED"],
+                  pending:["muted","PENDING"], skipped:["muted","SKIPPED"] };
+    const [c, l] = map[s] || ["muted", "IDLE"];
+    return `<span class="badge badge-${c}">${l}</span>`;
+}
+function agentOverallCls(s) {
+    return { completed:"success", degraded:"error", rejected:"muted", failed:"error", running:"processing" }[s] || "muted";
+}
+
+function renderAgentLogPanel() {
+    const pl = state.agentLog;
+    return `
+      <div class="panel">
+        <div class="panel-head"><span>live log</span>
+          <button class="console-btn" onclick="ReconForge.toggleAgentLog()">${pl.open ? "hide" : "show"}</button></div>
+        <div class="panel-body"><pre id="agent-log-pre" class="phase-log" ${pl.open ? "" : "hidden"}>${escapeHTML(pl.text || "(no run yet)")}</pre></div>
+      </div>`;
+}
+
+function renderAgentBackendPanel() {
+    if (state.role !== "admin") {
+        const c = state.config || {};
+        const mode = c["llm.mode"] || "api";
+        return panel("LLM backend", `<div class="status-panel">
+            <dt>Backend</dt><dd>${mode === "local" ? "Local Ollama" : "Claude API"}</dd>
+            <dt>Configured by</dt><dd class="text-mute">admin only</dd>
+          </div>`);
+    }
+    const c = state.config || {};
+    const mode = c["llm.mode"] || "api";
+    const keyset = !!c["llm.api_key"];
+    const capVal = (c["llm.max_cost_usd"] != null) ? c["llm.max_cost_usd"] : 5;
+    const fields = mode === "api" ? `
+        <div class="full"><label class="form-label">Anthropic API key ${keyset ? `<span class="badge badge-success">SET</span>` : ""}</label>
+          <input id="llm-key" type="password" autocomplete="off" placeholder="${keyset ? "•••••••• (blank = keep current)" : "sk-ant-…"}"></div>
+        <div><label class="form-label">Opus model</label><input id="llm-opus" type="text" value="${escapeAttr(c["llm.opus_model"] || "claude-opus-4-8")}"></div>
+        <div><label class="form-label">Haiku model</label><input id="llm-haiku" type="text" value="${escapeAttr(c["llm.haiku_model"] || "claude-haiku-4-5-20251001")}"></div>
+      ` : `
+        <div><label class="form-label">Ollama URL</label><input id="llm-ourl" type="text" value="${escapeAttr(c["llm.ollama_url"] || "http://127.0.0.1:11434")}"></div>
+        <div><label class="form-label">Ollama model</label><input id="llm-omodel" type="text" value="${escapeAttr(c["llm.ollama_default_model"] || "llama3.1:8b")}"></div>
+      `;
+    return `
+      <div class="panel">
+        <div class="panel-head"><span>llm backend</span></div>
+        <div class="panel-body">
+          <div class="radio-row">
+            <label class="radio-pill ${mode === "api" ? "selected" : ""}" onclick="ReconForge.setAgentBackend('api')">Claude API</label>
+            <label class="radio-pill ${mode === "local" ? "selected" : ""}" onclick="ReconForge.setAgentBackend('local')">Local Ollama</label>
+          </div>
+          <div class="spacer-md"></div>
+          <div class="form-grid">
+            ${fields}
+            <div><label class="form-label">Cost cap (USD / run)</label><input id="llm-cap" type="number" step="0.5" min="0" value="${escapeAttr(String(capVal))}"></div>
+          </div>
+          <div class="spacer-md"></div>
+          <button class="btn btn-primary" onclick="ReconForge.saveAgentConfig()">▸ Save backend</button>
+          <div class="form-help">Stored in this app's local config. Claude API is billed per token; the cost cap stops new LLM calls once a run reaches it. The key is never shown back here once saved.</div>
+        </div>
+      </div>`;
+}
+
+async function ensureConfigSilent() {
+    if (state.config) return;
+    const r = await api("GET", "/api/config");
+    if (r.ok) state.config = r.data && (r.data.data || r.data);
+}
+async function ensureAgents() {
+    if (!state.agents) state.agents = { data: null };
+    if (!state.target) { if (currentRoute() === "agents") renderWorkspace(); return; }
+    await ensureConfigSilent();
+    const r = await api("GET", "/api/agent/state?target=" + encodeURIComponent(state.target));
+    if (r.ok) state.agents.data = r.data.data || r.data;
+    if (currentRoute() === "agents") renderWorkspace();
+    if (state.agents.data && state.agents.data.running) startAgentPoll();
+}
+function refreshAgents() { ensureAgents(); }
+
+async function startAgentRun() {
+    if (!state.target) { toast("Load a target first.", "error"); return; }
+    const sel = document.getElementById("agent-mode");
+    const mode = (sel && sel.value) || "passive_recon";
+    const r = await api("POST", "/api/agent/run", { target: state.target, mode });
+    if (r.ok && r.data && r.data.success) {
+        state.agentLog = { text: "(starting…)", open: true };
+        consoleLog("success", "agentic run queued (" + mode + ")");
+        toast("Agentic run started · " + mode, "success");
+        await ensureAgents();
+        startAgentPoll();
+    } else {
+        const msg = (r.data && r.data.message) || ("HTTP " + r.status);
+        consoleLog("error", "agentic run refused: " + msg);
+        toast("Refused: " + msg, "error");
+    }
+}
+
+function toggleAgentLog() {
+    state.agentLog.open = !state.agentLog.open;
+    renderWorkspace();
+    if (state.agentLog.open) agentTick();
+}
+
+async function setAgentBackend(mode) {
+    const r = await api("PUT", "/api/config", { "llm.mode": mode });
+    if (r.ok) {
+        if (state.config) state.config["llm.mode"] = mode;
+        toast("Backend: " + (mode === "local" ? "Local Ollama" : "Claude API"), "info");
+        ensureAgents();
+    } else { toast("Switch failed (admin only).", "error"); }
+}
+
+async function saveAgentConfig() {
+    const c = state.config || {};
+    const mode = c["llm.mode"] || "api";
+    const num = (id, dflt) => { const el = document.getElementById(id); const v = parseFloat(el && el.value); return isNaN(v) ? dflt : v; };
+    const txt = (id) => { const el = document.getElementById(id); return ((el && el.value) || "").trim(); };
+    const payload = { "llm.max_cost_usd": num("llm-cap", 5) };
+    if (mode === "api") {
+        const k = txt("llm-key"); if (k) payload["llm.api_key"] = k;   // only overwrite if provided
+        const o = txt("llm-opus"); if (o) payload["llm.opus_model"] = o;
+        const h = txt("llm-haiku"); if (h) payload["llm.haiku_model"] = h;
+    } else {
+        const u = txt("llm-ourl"); if (u) payload["llm.ollama_url"] = u;
+        const m = txt("llm-omodel"); if (m) payload["llm.ollama_default_model"] = m;
+    }
+    const r = await api("PUT", "/api/config", payload);
+    if (r.ok) {
+        // Don't keep the raw key in client state — drop it before caching.
+        delete payload["llm.api_key"];
+        state.config = Object.assign({}, state.config || {}, payload);
+        consoleLog("success", "llm backend saved");
+        toast("Backend saved.", "success");
+        ensureAgents();
+    } else { toast("Save failed (admin only).", "error"); }
+}
+
+function startAgentPoll() { stopAgentPoll(); state.agentPoll = setInterval(agentTick, 1500); }
+function stopAgentPoll() { if (state.agentPoll) { clearInterval(state.agentPoll); state.agentPoll = null; } }
+async function agentTick() {
+    if (currentRoute() !== "agents") { stopAgentPoll(); return; }
+    if (state.target) {
+        const r = await api("GET", "/api/agent/state?target=" + encodeURIComponent(state.target));
+        if (r.ok) state.agents.data = r.data.data || r.data;
+    }
+    if (state.agentLog.open && state.target) {
+        const lr = await api("GET", "/api/agent/logs?target=" + encodeURIComponent(state.target));
+        if (lr.ok) {
+            const dd = (lr.data && (lr.data.data || lr.data)) || {};
+            const logs = dd.logs || [];
+            state.agentLog.text = Array.isArray(logs) ? logs.join("\n") : String(logs);
+        }
+    }
+    // Update only the live region + log pre (leaves the backend-config inputs alone).
+    const live = document.getElementById("agent-live");
+    if (live) live.innerHTML = renderAgentLive();
+    const pre = document.getElementById("agent-log-pre");
+    if (pre && state.agentLog.open) { pre.textContent = state.agentLog.text || "(no run yet)"; pre.scrollTop = pre.scrollHeight; }
+    if (!(state.agents.data && state.agents.data.running)) stopAgentPoll();
+}
+
 // ── Pipeline command center (drives scripts/recon/NN-*.sh) ───────
 PAGES.pipeline = function () {
     if (!state.target) {
@@ -3239,6 +3489,8 @@ window.ReconForge = {
     scoreCvss, generateDraft, copyDraft, runQualityGate,
     // pipeline command center
     runPhase, cancelPhase, openPhaseLog, closePhaseLog, refreshPipeline, pipelineNewRun,
+    // agents command center
+    startAgentRun, refreshAgents, toggleAgentLog, setAgentBackend, saveAgentConfig,
     enrollMonitor, toggleMonitor, removeMonitor,
     saveOpsec,
     // ── [agent: toolchain] ── toolchain health + workflows

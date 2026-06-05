@@ -305,6 +305,11 @@ def _seed_config_from_settings() -> None:
     idents = doc.get("platform_identities") or {}
     if idents:
         set_config("platform_identities", idents)
+    # LLM backend config (api_key, mode, model overrides) lives under the
+    # `llm.*` namespace the agent layer reads (agents/base.py:_config_get).
+    for k, v in (doc.get("llm") or {}).items():
+        if v is not None and v != "":
+            set_config(f"llm.{k}", v)
 
 def add_history(domain: Optional[str], source: str, text: str) -> None:
     db_exec("INSERT INTO history(domain,source,text) VALUES(?,?,?)",
@@ -2389,6 +2394,131 @@ def submit_phase(target: str, phase_id: str, username: str,
     add_history(target, "pipeline", f"phase {phase_id} queued by {username} (job {job.id})")
     return job
 
+# ═══════════════════════════════════════════════════════════
+#  AGENTIC PIPELINE  (six-agent LLM chain, app-triggered)
+# ═══════════════════════════════════════════════════════════
+# The agent layer (agents/, core/pipeline.py) was fully built but never
+# reachable from the app. This wires it to a job: ScopeGuard (pure logic) →
+# Strategist → Recon → Hunter → Analyst → Reporter, streaming each agent's
+# events to the live log and tracking per-agent status + cost. Backend is
+# switchable (llm.mode = api|local) via Settings.
+AGENT_CHAIN: List[Dict[str, str]] = [
+    {"name": "scope_guard", "label": "Scope Guard", "desc": "Pure-logic scope gate (no LLM call)"},
+    {"name": "strategist",  "label": "Strategist",  "desc": "Ranks scope into an executable attack plan"},
+    {"name": "recon",       "label": "Recon",       "desc": "Drives adaptive tool selection on discoveries"},
+    {"name": "hunter",      "label": "Hunter",      "desc": "Identifies + scores exploitable vuln classes"},
+    {"name": "analyst",     "label": "Analyst",     "desc": "CVSS, bounty estimate, chains, dup detection"},
+    {"name": "reporter",    "label": "Reporter",    "desc": "Drafts platform-ready submissions"},
+]
+_AGENT_NAMES = [a["name"] for a in AGENT_CHAIN]
+# target -> {status, total_cost, job_id, started_at, completed_at,
+#            agents:{name:{status,cost,error}}, logs:[...]}
+_agent_status: Dict[str, Dict[str, Any]] = {}
+
+def _agent_reset(target: str, job_id: str) -> None:
+    with _lock:
+        _agent_status[target] = {
+            "status": "running", "total_cost": 0.0, "job_id": job_id,
+            "started_at": _utcnow_sql(), "completed_at": None,
+            "agents": {n: {"status": "pending", "cost": 0.0, "error": None}
+                       for n in _AGENT_NAMES},
+            "logs": [],
+        }
+
+def _set_agent(target: str, name: Optional[str], **fields) -> None:
+    if not name:
+        return
+    with _lock:
+        st = _agent_status.get(target)
+        if st and name in st["agents"]:
+            st["agents"][name].update(fields)
+
+def _set_agent_run(target: str, **fields) -> None:
+    with _lock:
+        st = _agent_status.get(target)
+        if st:
+            st.update(fields)
+
+def _agent_get(target: str, name: str) -> Dict[str, Any]:
+    with _lock:
+        return dict((_agent_status.get(target, {}).get("agents", {}) or {}).get(name, {}))
+
+def run_agentic_job(job: "Job") -> None:
+    """Execute the six-agent LLM chain as a job (dispatched on options['agentic'])."""
+    target = job.domain
+    job.status = "running"
+    job.started_at = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    _agent_reset(target, job.id)
+    try:
+        from agents.base import AgentContext
+        from core.pipeline import run_agentic_pipeline
+        prog = _active_program() or _program_for(target)
+        mode = job.options.get("mode", "passive_recon")
+        backend = get_config("llm.mode", "api")
+        cap = float(get_config("llm.max_cost_usd", 5.0) or 5.0)
+        ctx = AgentContext(job_id=job.id, program=prog,
+                           inputs={"domain": target, "target": target},
+                           db=get_db(), cost_cap_usd=cap)
+        job.current_step = "scope_guard"
+        job.log(f"▶ agentic run · target {target} · mode {mode} · "
+                f"backend {backend} · cap ${cap:.2f}", "agent")
+
+        prev = {"name": None}
+        def emit_fn(kind: str, data: Any) -> None:
+            try:
+                snippet = data if isinstance(data, str) else json.dumps(data, default=str)
+                job.log(f"{kind}: {snippet[:500]}", "agent")
+                if kind == "pipeline.agent_start":
+                    a = (data or {}).get("agent")
+                    # The chain is sequential: a new agent starting means the
+                    # previous one finished cleanly (degraded ones are marked
+                    # explicitly below).
+                    if prev["name"] and _agent_get(target, prev["name"]).get("status") == "running":
+                        _set_agent(target, prev["name"], status="completed")
+                    _set_agent(target, a, status="running")
+                    job.current_step = a
+                    prev["name"] = a
+                elif kind == "pipeline.agent_degraded":
+                    _set_agent(target, (data or {}).get("agent"),
+                               status="degraded", error=(data or {}).get("error"))
+            except Exception:
+                pass
+
+        result = run_agentic_pipeline(ctx, mode=mode, emit_fn=emit_fn)
+
+        # Reconcile per-agent state from the authoritative PipelineResult.
+        for name in _AGENT_NAMES:
+            ar = (result.agents or {}).get(name)
+            if ar is None:
+                _set_agent(target, name, status="skipped")
+            else:
+                _set_agent(target, name,
+                           status=("completed" if ar.success else "failed"),
+                           cost=round(ar.cost_usd, 4), error=ar.error)
+        _set_agent_run(target, status=result.status,
+                       total_cost=round(result.total_cost_usd, 4),
+                       completed_at=_utcnow_sql(),
+                       logs=job.get_logs())
+        job.log(f"agentic run {result.status} · ${result.total_cost_usd:.4f} · "
+                f"{len(result.errors)} error(s)", "agent",
+                "INFO" if result.status in ("completed", "rejected") else "WARNING")
+        # rejected/degraded are valid terminal states, not job failures.
+        _finalize_phase_job(job, "completed" if result.status != "failed" else "failed")
+    except Exception:
+        job.log(f"agentic run crashed\n{traceback.format_exc()}", "agent", "ERROR")
+        _set_agent_run(target, status="failed", completed_at=_utcnow_sql(),
+                       logs=job.get_logs())
+        _finalize_phase_job(job, "failed")
+
+def submit_agentic(target: str, mode: str, username: str) -> "Job":
+    """Enqueue an agentic run. Scope enforced by the caller (API layer)."""
+    job = Job(target, username, {"agentic": True, "mode": mode})
+    with _lock:
+        _jobs[job.id] = job
+    _pending.put(job)
+    add_history(target, "agent", f"agentic run queued by {username} (job {job.id}, mode {mode})")
+    return job
+
 def _dispatcher_worker() -> None:
     while not _shutdown.is_set():
         try:
@@ -2401,7 +2531,12 @@ def _dispatcher_worker() -> None:
                     with _lock:
                         _jobs.pop(job.id, None)
                     continue
-                runner = run_phase_job if job.options.get("phase") else run_pipeline
+                if job.options.get("agentic"):
+                    runner = run_agentic_job
+                elif job.options.get("phase"):
+                    runner = run_phase_job
+                else:
+                    runner = run_pipeline
                 job._thread = threading.Thread(
                     target=runner, args=(job,),
                     daemon=True, name=f"pipeline-{job.id}")
@@ -2756,6 +2891,11 @@ class ReconHandler(BaseHTTPRequestHandler):
             return self._api_pipeline_logs(qs)
         if path == "/api/pipeline":
             return self._api_pipeline_get(qs)
+        # agentic pipeline (six-agent LLM chain)
+        if path == "/api/agent/state":
+            return self._api_agent_state(qs)
+        if path == "/api/agent/logs":
+            return self._api_agent_logs(qs)
         # config / history / logs
         if path == "/api/config":
             return self._api_config_get()
@@ -2806,6 +2946,8 @@ class ReconHandler(BaseHTTPRequestHandler):
             return self._api_scope_save(session)
         if path == "/api/pipeline/run":
             return self._api_pipeline_run(session)
+        if path == "/api/agent/run":
+            return self._api_agent_run(session)
         m = re.match(r"^/api/jobs/([a-f0-9]+)/(pause|resume|cancel|skip-step)$", path)
         if m:
             return self._api_job_action(m.group(1), m.group(2), session)
@@ -3162,6 +3304,9 @@ class ReconHandler(BaseHTTPRequestHandler):
             "backup_interval","cleanup_temp_h","cleanup_days","https_enabled",
             "opsec_http_proxy","opsec_rate_limit","opsec_random_agent","opsec_delay",
             "auto_ingest_vault","notify_on_new_assets","vault_path",
+            # LLM / agent backend (switchable Claude API ↔ local Ollama).
+            "llm.mode","llm.api_key","llm.opus_model","llm.haiku_model",
+            "llm.ollama_url","llm.ollama_default_model","llm.max_cost_usd",
         ]
         cfg = {f: get_config(f) for f in fields}
         cfg["tools"] = tools
@@ -3180,6 +3325,9 @@ class ReconHandler(BaseHTTPRequestHandler):
             # Vault handoff + monitoring.
             "vault_path","reconforge_output_dir","auto_emit_contract",
             "auto_ingest_vault","notify_on_new_assets",
+            # LLM / agent backend (switchable Claude API ↔ local Ollama).
+            "llm.mode","llm.api_key","llm.opus_model","llm.haiku_model",
+            "llm.ollama_url","llm.ollama_default_model","llm.max_cost_usd",
         }
         for k, v in body.items():
             if k in safe_keys:
@@ -3302,6 +3450,72 @@ class ReconHandler(BaseHTTPRequestHandler):
         job = submit_phase(target, phase_id, session["username"], fresh=bool(body.get("fresh")))
         self._ok({"job_id": job.id, "phase": phase_id,
                   "datestamp": job.options.get("datestamp")}, f"phase {phase_id} queued")
+
+    # ── API: agentic pipeline (six-agent LLM chain) ──────────
+    def _api_agent_state(self, qs: Dict) -> None:
+        target = (qs.get("target", [None])[0] or "").strip().lower()
+        with _lock:
+            st = dict(_agent_status.get(target, {})) if target else {}
+            agents_snap = dict(st.get("agents", {})) if st else {}
+            running_job = next((j.id for j in _jobs.values()
+                                if j.options.get("agentic") and j.domain == target), None)
+        # Live cost from agent_runs while a job is in flight.
+        cost = st.get("total_cost", 0.0)
+        jid = st.get("job_id")
+        if running_job and jid:
+            row = db_row("SELECT COALESCE(SUM(cost_usd),0) AS c FROM agent_runs "
+                         "WHERE job_id=? AND status='completed'", (jid,))
+            if row:
+                cost = round(row["c"], 4)
+        chain = []
+        for a in AGENT_CHAIN:
+            s = agents_snap.get(a["name"], {})
+            chain.append({**a, "status": s.get("status", "idle"),
+                          "cost": s.get("cost", 0.0), "error": s.get("error")})
+        self._ok({
+            "target": target or None,
+            "chain": chain,
+            "status": st.get("status"),
+            "running": bool(running_job),
+            "total_cost": cost,
+            "started_at": st.get("started_at"),
+            "completed_at": st.get("completed_at"),
+            "backend": get_config("llm.mode", "api"),
+            "api_key_set": bool(get_config("llm.api_key")),
+            "cost_cap": float(get_config("llm.max_cost_usd", 5.0) or 5.0),
+            "scope_active": bool(get_config("active_program")),
+        })
+
+    def _api_agent_logs(self, qs: Dict) -> None:
+        target = (qs.get("target", [None])[0] or "").strip().lower()
+        if not target:
+            return self._err("target is required")
+        with _lock:
+            job = next((j for j in _jobs.values()
+                        if j.options.get("agentic") and j.domain == target), None)
+            stored = (_agent_status.get(target, {}) or {}).get("logs") or []
+        self._ok({"logs": job.get_logs() if job else stored})
+
+    def _api_agent_run(self, session: Dict) -> None:
+        body = self._body_json() or {}
+        target = (body.get("target") or "").strip().lower()
+        mode = (body.get("mode") or "passive_recon").strip()
+        if not target:
+            return self._err("target is required")
+        # Scope Guard gate before enqueue (the in-pipeline ScopeGuard agent also
+        # gates, but refuse here so an out-of-scope run never even starts).
+        prog = _active_program()
+        if prog is not None:
+            res = scope_guard.check(target, prog)
+            if not res.get("allowed"):
+                add_history(target, "scope_guard", f"agentic run REFUSED: {res.get('reason')}")
+                return self._err(f"out of scope: {res.get('reason')}", 403)
+        with _lock:
+            if any(j.options.get("agentic") and j.domain == target for j in _jobs.values()):
+                return self._err("an agentic run is already in progress for this target", 409)
+        job = submit_agentic(target, mode, session["username"])
+        self._ok({"job_id": job.id, "mode": mode, "backend": get_config("llm.mode", "api")},
+                 "agentic run queued")
 
     # ── API: history / logs ──────────────────────────────────
     def _api_history(self, qs: Dict) -> None:
