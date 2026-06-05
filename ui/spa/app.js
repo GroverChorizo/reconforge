@@ -1946,10 +1946,10 @@ function renderAgentLogPanel() {
 
 function renderAgentBackendPanel() {
     if (state.role !== "admin") {
-        const c = state.config || {};
-        const mode = c["llm.mode"] || "api";
+        // Non-admins can't read /api/config; show the backend from agent-state.
+        const backend = (state.agents.data && state.agents.data.backend) || "api";
         return panel("LLM backend", `<div class="status-panel">
-            <dt>Backend</dt><dd>${mode === "local" ? "Local Ollama" : "Claude API"}</dd>
+            <dt>Backend</dt><dd>${backend === "local" ? "Local Ollama" : "Claude API"}</dd>
             <dt>Configured by</dt><dd class="text-mute">admin only</dd>
           </div>`);
     }
@@ -1987,7 +1987,8 @@ function renderAgentBackendPanel() {
 }
 
 async function ensureConfigSilent() {
-    if (state.config) return;
+    // /api/config is admin-only and returns secrets masked — only admins fetch it.
+    if (state.config || state.role !== "admin") return;
     const r = await api("GET", "/api/config");
     if (r.ok) state.config = r.data && (r.data.data || r.data);
 }

@@ -38,7 +38,26 @@ import scope_guard  # Phase 1: pure-logic gate, runs before every dispatch
 VERSION      = "2.0.0"
 APP_NAME     = "ReconForge"
 DEFAULT_PORT = 8342
-DEFAULT_HOST = "0.0.0.0"
+# Bind loopback by default so running the app never silently exposes it to the
+# network. Pass --host 0.0.0.0 to deliberately listen on all interfaces (and
+# only behind your own auth / firewall).
+DEFAULT_HOST = "127.0.0.1"
+
+# Config keys whose values are secrets: never echoed back to clients (masked
+# with SECRET_MASK in GET /api/config) and never overwritten by the mask.
+SECRET_MASK = "********"
+_SECRET_CONFIG_KEYS = {"github_token", "llm.api_key"}
+
+def _valid_target(s: str) -> bool:
+    """A target must look like a hostname / domain / wildcard / IP. Rejects
+    anything with whitespace or shell metacharacters before it can reach an
+    env var or a tool argument — defense in depth on top of scope_guard."""
+    s = (s or "").strip().lower()
+    if not s or len(s) > 253:
+        return False
+    if re.match(r"^(\*\.)?[a-z0-9_](?:[a-z0-9_.-]*[a-z0-9_])?$", s):
+        return True
+    return bool(re.match(r"^(\d{1,3}\.){3}\d{1,3}$", s))
 
 _BASE            = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR         = os.environ.get("RECON_DATA_DIR", os.path.join(_BASE, "recon_data"))
@@ -2898,6 +2917,8 @@ class ReconHandler(BaseHTTPRequestHandler):
             return self._api_agent_logs(qs)
         # config / history / logs
         if path == "/api/config":
+            if session.get("role") != "admin":
+                return self._err("Forbidden", 403)
             return self._api_config_get()
         if path == "/api/history":
             return self._api_history(qs)
@@ -3111,10 +3132,13 @@ class ReconHandler(BaseHTTPRequestHandler):
         token = create_session(row["id"], username, row["role"])
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
+        # Mark the session cookie Secure when the connection is actually TLS so
+        # it never rides over plain HTTP after a downgrade.
+        secure = "; Secure" if isinstance(self.connection, ssl.SSLSocket) else ""
         # Max-Age is relative seconds — immune to client/server clock skew,
         # which bit us on VMs whose RTC drifted from real UTC.
         self.send_header("Set-Cookie",
-                         f"session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_TTL}")
+                         f"session={token}; Path=/; HttpOnly; SameSite=Lax{secure}; Max-Age={SESSION_TTL}")
         body_b = json.dumps({"success": True, "message": "OK",
                              "data": {"role": row["role"], "username": username}}).encode()
         self.send_header("Content-Length", len(body_b))
@@ -3206,6 +3230,8 @@ class ReconHandler(BaseHTTPRequestHandler):
         domain = body.get("domain", "").strip()
         if not domain:
             return self._err("domain is required")
+        if not _valid_target(domain):
+            return self._err("invalid target (must be a hostname, domain, wildcard, or IP)")
         opts = body.get("options", {})
         jobs = submit_domain(domain, session["username"], opts)
         self._ok([j.to_dict() for j in jobs], f"{len(jobs)} job(s) queued")
@@ -3308,7 +3334,12 @@ class ReconHandler(BaseHTTPRequestHandler):
             "llm.mode","llm.api_key","llm.opus_model","llm.haiku_model",
             "llm.ollama_url","llm.ollama_default_model","llm.max_cost_usd",
         ]
-        cfg = {f: get_config(f) for f in fields}
+        cfg = {}
+        for f in fields:
+            v = get_config(f)
+            # Never echo raw secrets back to a client — return a masked
+            # "set" sentinel so the UI can show status without leaking the key.
+            cfg[f] = (SECRET_MASK if v else "") if f in _SECRET_CONFIG_KEYS else v
         cfg["tools"] = tools
         self._ok(cfg)
 
@@ -3331,6 +3362,10 @@ class ReconHandler(BaseHTTPRequestHandler):
         }
         for k, v in body.items():
             if k in safe_keys:
+                # A masked secret coming back means "unchanged" — never persist
+                # the mask sentinel over a real stored key.
+                if k in _SECRET_CONFIG_KEYS and v == SECRET_MASK:
+                    continue
                 set_config(k, v)
             elif k == "tools":
                 set_config("tools", v)
@@ -3436,6 +3471,8 @@ class ReconHandler(BaseHTTPRequestHandler):
         phase_id = (body.get("phase") or "").strip()
         if not target:
             return self._err("target is required")
+        if not _valid_target(target):
+            return self._err("invalid target (must be a hostname, domain, wildcard, or IP)")
         if phase_id not in _PHASE_BY_ID:
             return self._err(f"unknown phase: {phase_id}")
         # Scope Guard (doctrine: gate before any tool spawns). The phase script
@@ -3502,6 +3539,8 @@ class ReconHandler(BaseHTTPRequestHandler):
         mode = (body.get("mode") or "passive_recon").strip()
         if not target:
             return self._err("target is required")
+        if not _valid_target(target):
+            return self._err("invalid target (must be a hostname, domain, wildcard, or IP)")
         # Scope Guard gate before enqueue (the in-pipeline ScopeGuard agent also
         # gates, but refuse here so an out-of-scope run never even starts).
         prog = _active_program()
