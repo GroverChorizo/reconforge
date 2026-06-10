@@ -845,3 +845,51 @@ class TestReconAssetIngest:
         assert by_id["archive-urls"]["ingest"] == "archive"
         assert by_id["param-discovery"]["ingest"] == "params"
         assert by_id["js-analyze"]["ingest"] == "jsurls"
+
+
+# ═══════════════════════════════════════════════════════════
+#  SECURITY HARDENING — F2 traversal, F3 XSS sink, F6 CSP
+# ═══════════════════════════════════════════════════════════
+class TestSecurityHardening:
+
+    # ── F2: path-traversal containment for served files ──
+    def test_path_within_allows_contained(self, tmp_path):
+        base = str(tmp_path / "screenshots")
+        os.makedirs(base, exist_ok=True)
+        assert M._is_path_within(base, os.path.join(base, "shot.png"))
+        assert M._is_path_within(base, os.path.join(base, "host", "shot.png"))
+        assert M._is_path_within(base, base)
+
+    def test_path_within_blocks_traversal(self, tmp_path):
+        base = str(tmp_path / "screenshots")
+        os.makedirs(base, exist_ok=True)
+        assert not M._is_path_within(base, os.path.join(base, "..", "..", "recon.db"))
+        assert not M._is_path_within(base, os.path.join(base, "../../etc/passwd"))
+        assert not M._is_path_within(base, str(tmp_path / "elsewhere"))
+
+    # ── F3: gallery reflected-XSS is HTML-escaped ──
+    def test_gallery_escapes_script_injection(self):
+        body = M._render_gallery_html("<script>alert(1)</script>", 1).decode()
+        assert "<script>alert(1)</script>" not in body   # raw payload neutralized
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in body
+        assert "__DOMAIN__" not in body                  # placeholder substituted
+
+    def test_gallery_escapes_quote_breakout(self):
+        body = M._render_gallery_html('";alert(document.cookie)//', 2).decode()
+        assert '";alert(document.cookie)//' not in body  # quote can't break the JS string
+        assert "__PAGE__" not in body
+
+    def test_gallery_page_is_coerced_int(self):
+        body = M._render_gallery_html("example.com", 3).decode()
+        assert "example.com" in body
+
+    # ── F6: CSP policy strings ──
+    def test_csp_strict_blocks_inline_script(self):
+        assert "script-src 'self'" in M._CSP_STRICT
+        assert "script-src 'self' 'unsafe-inline'" not in M._CSP_STRICT
+        assert "frame-ancestors 'none'" in M._CSP_STRICT
+        assert "object-src 'none'" in M._CSP_STRICT
+
+    def test_csp_relaxed_allows_inline_script(self):
+        # the legacy inline-script pages opt into this; strict stays the default
+        assert "script-src 'self' 'unsafe-inline'" in M._CSP_RELAXED

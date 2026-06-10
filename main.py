@@ -13,7 +13,7 @@ Usage:
 # ═══════════════════════════════════════════════════════════
 #  IMPORTS
 # ═══════════════════════════════════════════════════════════
-import argparse, base64, hashlib, hmac, json, logging, mimetypes
+import argparse, base64, hashlib, hmac, html, json, logging, mimetypes
 import os, queue, re, secrets, shutil, signal, socket, sqlite3, ssl
 import subprocess, sys, tarfile, tempfile, threading, time, traceback
 import urllib.parse, urllib.request, urllib.error
@@ -58,6 +58,14 @@ def _valid_target(s: str) -> bool:
     if re.match(r"^(\*\.)?[a-z0-9_](?:[a-z0-9_.-]*[a-z0-9_])?$", s):
         return True
     return bool(re.match(r"^(\d{1,3}\.){3}\d{1,3}$", s))
+
+def _is_path_within(base: str, target: str) -> bool:
+    """True iff `target` resolves to a location inside `base`. Path-traversal
+    guard for user-influenced file paths: realpath collapses any `..`/symlink
+    so a captured segment like `../../recon.db` can't escape `base`."""
+    rb = os.path.realpath(base)
+    rt = os.path.realpath(target)
+    return rt == rb or rt.startswith(rb + os.sep)
 
 _BASE            = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR         = os.environ.get("RECON_DATA_DIR", os.path.join(_BASE, "recon_data"))
@@ -2902,8 +2910,31 @@ def start_workers() -> None:
 # ═══════════════════════════════════════════════════════════
 #  HTTP SERVER  (request handler)
 # ═══════════════════════════════════════════════════════════
+# Content-Security-Policy (F6). Default is strict: the React SPA ships a single
+# external bundle (/static/app.js) and has no inline scripts, so `script-src
+# 'self'` is enough and blocks injected inline script as XSS defense-in-depth.
+# `style-src` keeps 'unsafe-inline' because React renders inline style="" attrs.
+# The relaxed variant (inline scripts allowed) is used only for the two legacy
+# server-rendered pages that still carry an inline <script> (gallery + the
+# embedded fallback SPA).
+_CSP_STRICT = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+               "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+               "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+_CSP_RELAXED = _CSP_STRICT.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'")
+
 class ReconHandler(BaseHTTPRequestHandler):
     server_version = f"{APP_NAME}/{VERSION}"
+
+    def end_headers(self):
+        # Security headers on every response (F6). CSP defaults to strict; a
+        # handler serving an inline-script page sets self._csp = _CSP_RELAXED
+        # before sending. self._csp is reset per request in _dispatch.
+        self.send_header("Content-Security-Policy", getattr(self, "_csp", None) or _CSP_STRICT)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        super().end_headers()
 
     def log_message(self, fmt, *args):
         # Route access log through emit() so it shows up alongside other server
@@ -2922,6 +2953,7 @@ class ReconHandler(BaseHTTPRequestHandler):
     def do_DELETE(self): self._dispatch("DELETE")
 
     def _dispatch(self, method: str) -> None:
+        self._csp = None  # per-request CSP; pages with inline <script> opt into relaxed
         try:
             parsed = urllib.parse.urlparse(self.path)
             path   = parsed.path.rstrip("/") or "/"
@@ -3049,7 +3081,8 @@ class ReconHandler(BaseHTTPRequestHandler):
         # screenshots
         m = re.match(r"^/screenshots/(.+)$", path)
         if m:
-            return self._serve_file(os.path.join(DATA_DIR, "screenshots", m.group(1)))
+            return self._serve_file(os.path.join(SCREENSHOTS_DIR, m.group(1)),
+                                    base=SCREENSHOTS_DIR)
 
         self._err("Not found", 404)
 
@@ -3151,8 +3184,10 @@ class ReconHandler(BaseHTTPRequestHandler):
                     body = f.read()
             except OSError:
                 body = FRONTEND_HTML.encode()
+                self._csp = _CSP_RELAXED  # embedded fallback carries inline scripts
         else:
             body = FRONTEND_HTML.encode()
+            self._csp = _CSP_RELAXED      # embedded fallback carries inline scripts
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", len(body))
@@ -3182,8 +3217,12 @@ class ReconHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _serve_file(self, path: str) -> None:
-        if not os.path.exists(path):
+    def _serve_file(self, path: str, base: Optional[str] = None) -> None:
+        # Path-traversal guard: when the path is built from user input, confine
+        # the resolved real path under `base` so a `..` segment can't escape it.
+        if base is not None and not _is_path_within(base, path):
+            return self._err("Not found", 404)
+        if not os.path.isfile(path):
             return self._err("Not found", 404)
         mt, _ = mimetypes.guess_type(path)
         with open(path, "rb") as f:
@@ -3805,8 +3844,12 @@ class ReconHandler(BaseHTTPRequestHandler):
 
     # ── gallery ──────────────────────────────────────────────
     def _serve_gallery(self, domain: str, qs: Dict) -> None:
-        page = int(qs.get("page", ["1"])[0])
-        body = GALLERY_HTML.replace("__DOMAIN__", domain).replace("__PAGE__", str(page)).encode()
+        try:
+            page = max(1, int(qs.get("page", ["1"])[0]))
+        except (ValueError, TypeError):
+            page = 1
+        self._csp = _CSP_RELAXED  # this legacy page carries an inline <script>
+        body = _render_gallery_html(domain, page)
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", len(body))
@@ -3879,6 +3922,17 @@ function openModal(src){document.getElementById("modal-img").src=src;document.ge
 function closeModal(){document.getElementById("modal").classList.remove("open")}
 load();
 </script></body></html>"""
+
+def _render_gallery_html(domain: str, page: int) -> bytes:
+    """Render the gallery page with the user-supplied domain HTML-escaped.
+    /gallery/<domain> reflects `domain` into both HTML text and an inline
+    <script> string; escaping `<>&"'` neutralizes tag injection AND a
+    `</script>` break-out (entities aren't decoded inside raw-text <script>)."""
+    safe_domain = html.escape(str(domain), quote=True)
+    return (GALLERY_HTML
+            .replace("__DOMAIN__", safe_domain)
+            .replace("__PAGE__", str(int(page)))
+            .encode())
 
 # ═══════════════════════════════════════════════════════════
 #  FRONTEND SPA  (single-page app, cyberpunk theme)
