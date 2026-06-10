@@ -2170,11 +2170,11 @@ PIPELINE_PHASES: List[Dict[str, Any]] = [
     {"id":"tls-cdn",          "num":"03","script":"03-tls-cdn.sh",          "label":"TLS / CDN",          "risk":"active",     "tools":["tlsx","cdncheck"]},
     {"id":"port-scan",        "num":"04","script":"04-port-scan.sh",        "label":"Port Scan",          "risk":"active",     "tools":["naabu"]},
     {"id":"http-probe",       "num":"05","script":"05-http-probe.sh",       "label":"HTTP Probe",         "risk":"active",     "tools":["httpx"], "ingest":"httpx"},
-    {"id":"crawl",            "num":"06","script":"06-crawl.sh",            "label":"Crawl",              "risk":"active",     "tools":["katana","hakrawler"]},
-    {"id":"js-analyze",       "num":"07","script":"07-js-analyze.sh",       "label":"JS Analyze",         "risk":"active",     "tools":["subjs","jsluice","trufflehog","mantra"]},
+    {"id":"crawl",            "num":"06","script":"06-crawl.sh",            "label":"Crawl",              "risk":"active",     "tools":["katana","hakrawler"], "ingest":"crawl"},
+    {"id":"js-analyze",       "num":"07","script":"07-js-analyze.sh",       "label":"JS Analyze",         "risk":"active",     "tools":["subjs","jsluice","trufflehog","mantra"], "ingest":"jsurls"},
     {"id":"content-discovery","num":"08","script":"08-content-discovery.sh","label":"Content Discovery",  "risk":"aggressive", "tools":["feroxbuster","ffuf","gobuster","dirsearch"]},
-    {"id":"archive-urls",     "num":"09","script":"09-archive-urls.sh",     "label":"Archive URLs",       "risk":"passive",    "tools":["gau","waybackurls"]},
-    {"id":"param-discovery",  "num":"10","script":"10-param-discovery.sh",  "label":"Param Discovery",    "risk":"active",     "tools":["arjun","paramspider","x8"]},
+    {"id":"archive-urls",     "num":"09","script":"09-archive-urls.sh",     "label":"Archive URLs",       "risk":"passive",    "tools":["gau","waybackurls"], "ingest":"archive"},
+    {"id":"param-discovery",  "num":"10","script":"10-param-discovery.sh",  "label":"Param Discovery",    "risk":"active",     "tools":["arjun","paramspider","x8"], "ingest":"params"},
     {"id":"pattern-filter",   "num":"11","script":"11-pattern-filter.sh",   "label":"Pattern Filter (gf)","risk":"passive",    "tools":["gf"]},
     {"id":"payload-replace",  "num":"12","script":"12-payload-replace.sh",  "label":"Payload Replace",    "risk":"passive",    "tools":["qsreplace"]},
     {"id":"oob-callback",     "num":"13","script":"13-oob-callback.sh",     "label":"OOB Callback",       "risk":"passive",    "tools":["interactsh"]},
@@ -2369,19 +2369,70 @@ def _ingest_nuclei_dir(domain: str, run_dir: str) -> int:
     db.commit()
     return findings
 
+def _ingest_asset_file(domain: str, path: str, kind: str, source: str = "",
+                       cap: int = 100_000) -> int:
+    """Ingest a newline-delimited recon output file into recon_assets as
+    (domain, kind, value) rows. Idempotent via the UNIQUE constraint, so
+    re-running a phase never double-counts. `cap` bounds pathologically large
+    url corpora. Returns the number of rows newly inserted."""
+    if not os.path.isfile(path):
+        return 0
+    db = get_db()
+    before = db.total_changes
+    rows: List[Tuple[str, str, str, str]] = []
+    seen = 0
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            v = line.strip()
+            if not v or v.startswith("#"):
+                continue
+            # url/js assets must look like URLs; params are bare names/keys.
+            if kind in ("url", "js") and "://" not in v:
+                continue
+            rows.append((domain, kind, v[:2048], source))
+            seen += 1
+            if seen >= cap:
+                break
+    if rows:
+        db.executemany(
+            "INSERT OR IGNORE INTO recon_assets(domain,kind,value,source) VALUES(?,?,?,?)",
+            rows)
+        db.commit()
+    return db.total_changes - before
+
+def _recon_asset_counts() -> Dict[str, int]:
+    """{kind: count} across recon_assets. Empty dict if the table predates
+    migration 007 (defensive — /api/state must never 500 on a stale DB)."""
+    try:
+        return {r["kind"]: r["c"] for r in
+                db_rows("SELECT kind, COUNT(*) AS c FROM recon_assets GROUP BY kind")}
+    except sqlite3.OperationalError:
+        return {}
+
 def _ingest_phase(job: "Job", phase: Dict[str, Any], run_dir: str) -> Optional[int]:
     kind = phase.get("ingest")
     if not kind:
         return None
+    rd = lambda fn: os.path.join(run_dir, fn)  # noqa: E731
+    ia = lambda fn, k: _ingest_asset_file(job.domain, rd(fn), k, phase["id"])  # noqa: E731
     try:
         if kind == "subs":
-            return _ingest_subs_file(job.domain, os.path.join(run_dir, "subs.txt"))
+            return _ingest_subs_file(job.domain, rd("subs.txt"))
         if kind == "resolved":
-            return _ingest_subs_file(job.domain, os.path.join(run_dir, "resolved.txt"))
+            return _ingest_subs_file(job.domain, rd("resolved.txt"))
         if kind == "httpx":
-            return _ingest_httpx_jsonl(job.domain, os.path.join(run_dir, "httpx.jsonl"))
+            return _ingest_httpx_jsonl(job.domain, rd("httpx.jsonl"))
         if kind == "nuclei":
             return _ingest_nuclei_dir(job.domain, run_dir)
+        # ── finer-grained assets (URLs / JS / params) → recon_assets ──
+        if kind == "crawl":     # 06-crawl: urls.txt + js.txt
+            return ia("urls.txt", "url") + ia("js.txt", "js")
+        if kind == "jsurls":    # 07-js-analyze: URLs reconstructed from JS
+            return ia("js-extracted-urls.txt", "url")
+        if kind == "archive":   # 09-archive-urls: archive URLs + unfurled param keys
+            return ia("archive-urls.txt", "url") + ia("params.txt", "param")
+        if kind == "params":    # 10-param-discovery: arjun names + paramspider/x8 URLs
+            return ia("arjun.txt", "param") + ia("paramspider.txt", "url") + ia("x8.txt", "url")
     except Exception as e:
         job.log(f"ingest failed: {e}", "pipeline", "WARNING")
     return None
@@ -3210,10 +3261,17 @@ class ReconHandler(BaseHTTPRequestHandler):
         pending_jobs = [j.to_dict() for j in jobs_snap if j.status == "pending"]
         completed = rows_to_list(db_rows(
             "SELECT * FROM completed_jobs ORDER BY completed_at DESC LIMIT 20"))
+        asset_counts = _recon_asset_counts()
         stats = {
             "total_domains":    (db_row("SELECT COUNT(*) as c FROM targets") or {"c":0})["c"],
             "total_subdomains": (db_row("SELECT COUNT(*) as c FROM subdomains") or {"c":0})["c"],
             "total_findings":   (db_row("SELECT COUNT(*) as c FROM subdomains WHERE interesting=1") or {"c":0})["c"],
+            "total_urls":       asset_counts.get("url", 0),
+            "total_js":         asset_counts.get("js", 0),
+            "total_params":     asset_counts.get("param", 0),
+            "total_vuln_signals": (db_row("SELECT COUNT(*) as c FROM subdomains "
+                                          "WHERE nuclei_findings IS NOT NULL "
+                                          "AND nuclei_findings NOT IN ('', '[]')") or {"c":0})["c"],
             "running_count":    len(running),
             "queued_count":     len(pending_jobs),
         }

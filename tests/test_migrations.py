@@ -74,6 +74,7 @@ class TestDiscovery:
             "004_submission_drafts",
             "005_programs",
             "006_evidence_modes_taxonomy",
+            "007_recon_assets",
         ]
 
     def test_runner_module_excluded(self):
@@ -94,12 +95,13 @@ class TestFreshDB:
             "004_submission_drafts",
             "005_programs",
             "006_evidence_modes_taxonomy",
+            "007_recon_assets",
         ]
 
     def test_run_pending_applies_all_four(self, fresh_db):
         conn, _ = fresh_db
         applied = R.run_pending(conn)
-        assert len(applied) == 6
+        assert len(applied) == 7
 
     def test_baseline_tables_exist(self, fresh_db):
         conn, _ = fresh_db
@@ -114,7 +116,7 @@ class TestFreshDB:
         conn, _ = fresh_db
         R.run_pending(conn)
         for tbl in ("findings", "attack_techniques", "agent_memory",
-                    "agent_runs", "submission_drafts"):
+                    "agent_runs", "submission_drafts", "recon_assets"):
             row = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tbl,)
             ).fetchone()
@@ -132,6 +134,7 @@ class TestFreshDB:
             "004_submission_drafts",
             "005_programs",
             "006_evidence_modes_taxonomy",
+            "007_recon_assets",
         ]
 
 
@@ -169,6 +172,7 @@ class TestPopulatedDB:
             "004_submission_drafts",
             "005_programs",
             "006_evidence_modes_taxonomy",
+            "007_recon_assets",
         }
 
     def test_existing_data_preserved(self, main_initialized_db):
@@ -320,12 +324,12 @@ class TestCLI:
     def test_status_on_fresh_dir(self, tmp_path):
         r = self._run(["status"], tmp_path)
         assert r.returncode == 0, r.stderr
-        assert "pending (6)" in r.stdout
+        assert "pending (7)" in r.stdout
 
     def test_up_applies_all(self, tmp_path):
         r = self._run(["up", "--no-backup"], tmp_path)
         assert r.returncode == 0, r.stderr
-        assert "applied 6 migration" in r.stdout
+        assert "applied 7 migration" in r.stdout
 
     def test_up_twice_noop(self, tmp_path):
         self._run(["up", "--no-backup"], tmp_path)

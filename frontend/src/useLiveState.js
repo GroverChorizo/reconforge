@@ -189,8 +189,12 @@ function mergeLive(v, s, agent, logs, scope, tgt) {
   try {
     const st = s.stats || {};
     const stats = {
-      hosts: st.total_subdomains ?? null, urls: null, js: null, params: null,
-      vulns: null, findings: st.total_findings ?? null,
+      hosts: st.total_subdomains ?? null,
+      urls: st.total_urls ?? null,
+      js: st.total_js ?? null,
+      params: st.total_params ?? null,
+      vulns: st.total_vuln_signals ?? null,
+      findings: st.total_findings ?? null,
     };
     const mapJob = (j) => ({
       dom: j.domain || j.target || "—",

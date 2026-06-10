@@ -791,3 +791,57 @@ class TestMisc:
         assert "nuclei"   in M._PIPELINE_STEPS
         assert "nikto"    in M._PIPELINE_STEPS
         assert "gowitness" in M._PIPELINE_STEPS
+
+
+# ═══════════════════════════════════════════════════════════
+#  RECON ASSETS — URL / JS / param ingest + dashboard counters
+# ═══════════════════════════════════════════════════════════
+class TestReconAssetIngest:
+
+    def _write(self, tmp_path, name, lines):
+        p = tmp_path / name
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return str(p)
+
+    def test_ingest_urls_and_counts(self, tmp_path):
+        path = self._write(tmp_path, "archive-urls.txt", [
+            "https://example.com/a", "https://example.com/b",
+            "http://example.com/c", "not-a-url", "",
+        ])
+        n = M._ingest_asset_file("example.com", path, "url", "archive-urls")
+        assert n == 3                       # the bare "not-a-url" + blank are skipped
+        assert M._recon_asset_counts() == {"url": 3}
+
+    def test_ingest_is_idempotent(self, tmp_path):
+        path = self._write(tmp_path, "urls.txt", ["https://example.com/a", "https://example.com/b"])
+        assert M._ingest_asset_file("example.com", path, "url") == 2
+        # re-ingesting the same file inserts nothing new (UNIQUE constraint)
+        assert M._ingest_asset_file("example.com", path, "url") == 0
+        assert M._recon_asset_counts()["url"] == 2
+
+    def test_params_keep_bare_names(self, tmp_path):
+        # params are bare keys, not URLs — the url/js filter must NOT drop them
+        path = self._write(tmp_path, "params.txt", ["id", "redirect_uri", "token"])
+        n = M._ingest_asset_file("example.com", path, "param", "archive-urls")
+        assert n == 3
+        assert M._recon_asset_counts() == {"param": 3}
+
+    def test_missing_file_is_zero(self, tmp_path):
+        assert M._ingest_asset_file("example.com", str(tmp_path / "nope.txt"), "url") == 0
+
+    def test_state_stats_expose_asset_counts(self, tmp_path):
+        M._ingest_asset_file("example.com",
+                             self._write(tmp_path, "u.txt", ["https://example.com/1"]), "url")
+        M._ingest_asset_file("example.com",
+                             self._write(tmp_path, "j.txt", ["https://example.com/app.js"]), "js")
+        M._ingest_asset_file("example.com",
+                             self._write(tmp_path, "p.txt", ["id", "q"]), "param")
+        counts = M._recon_asset_counts()
+        assert counts == {"url": 1, "js": 1, "param": 2}
+
+    def test_asset_phases_have_ingest_keys(self):
+        by_id = {p["id"]: p for p in M.PIPELINE_PHASES}
+        assert by_id["crawl"]["ingest"] == "crawl"
+        assert by_id["archive-urls"]["ingest"] == "archive"
+        assert by_id["param-discovery"]["ingest"] == "params"
+        assert by_id["js-analyze"]["ingest"] == "jsurls"
