@@ -329,8 +329,15 @@ def isolated_db(tmp_path):
 
 class TestSubmitDomainIntegration:
 
-    def test_no_active_program_bypasses_guard(self, isolated_db):
-        # back-compat: when no program is configured, behavior is unchanged
+    def test_no_active_program_fails_closed(self, isolated_db):
+        # doctrine: Scope Guard blocks any execution against an unauthorized
+        # target. With no active program we REFUSE (fail-closed), not allow.
+        jobs = M.submit_domain("anything.com", "admin")
+        assert jobs == []
+
+    def test_allow_unscoped_override_permits(self, isolated_db):
+        # explicit, loudly-logged escape hatch for deliberate no-program runs
+        M.set_config("allow_unscoped", True)
         jobs = M.submit_domain("anything.com", "admin")
         assert len(jobs) == 1
 

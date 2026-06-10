@@ -2,6 +2,20 @@
 recon_data/
 out/
 
+# Local program scopes — real engagement configs stay off GitHub.
+# Keep the committed templates tracked; ignore everything else under scopes/.
+/scopes/*.json
+!/scopes/example.json
+!/scopes/examplecorp.json
+
+# Node / frontend toolchain — source lives in frontend/src, the built SPA is
+# committed under ui/spa/ (main.py serves it with no runtime build step).
+node_modules/
+
+# Local export bundles (not source — produced by ad-hoc packaging)
+/files.zip
+/reconforge-command-center.tar.gz
+
 # Python
 __pycache__/
 *.py[cod]

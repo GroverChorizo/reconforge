@@ -1556,7 +1556,7 @@ def _run_crtsh(job: Job) -> None:
             job.record_tool_result("crtsh", "rate-limited")
             return
         job.log("[crtsh] querying crt.sh", "crtsh")
-        url = f"https://crt.sh/?q=%.{job.domain}&output=json"
+        url = f"https://crt.sh/?q=%25.{job.domain}&output=json"
         subs: Set[str] = set()
         status = "ok"
         err: Optional[str] = None
@@ -2102,6 +2102,29 @@ def _active_program() -> Optional[Dict[str, Any]]:
         return None
 
 
+def _scope_gate(target: str) -> Dict[str, Any]:
+    """Fail-closed scope decision — the single gate every enqueue path funnels
+    through. Doctrine: Scope Guard "blocks any tool execution against an
+    unauthorized target", so with NO active program we REFUSE rather than
+    silently allow. An operator who genuinely wants an unscoped run sets
+    config['allow_unscoped']; that path is logged loudly every time so it can
+    never become a silent bypass. Returns a scope_guard.check()-shaped dict.
+    """
+    prog = _active_program()
+    if prog is None:
+        if get_config("allow_unscoped", False):
+            emit(f"UNSCOPED run of {target}: allow_unscoped is set — no scope gate "
+                 f"and no program headers will be enforced", "WARNING", "scope_guard")
+            return {"allowed": True,
+                    "reason": "allow_unscoped override (no active program)",
+                    "tier": -1, "platform": "", "headers": {}, "matched": None}
+        return {"allowed": False,
+                "reason": "no active program configured — refusing (fail-closed); "
+                          "activate a program or set allow_unscoped to override",
+                "tier": -1, "platform": "", "headers": {}, "matched": None}
+    return scope_guard.check(target, prog)
+
+
 def submit_domain(raw_domain: str, username: str,
                   options: Optional[Dict] = None) -> List["Job"]:
     """Expand wildcards then enqueue jobs. Returns list of Job objects.
@@ -2110,16 +2133,14 @@ def submit_domain(raw_domain: str, username: str,
     logged to history and skipped — they never become Job objects.
     """
     jobs = []
-    prog = _active_program()
     for domain in expand_domain(raw_domain.strip().lower()):
-        if prog is not None:
-            result = scope_guard.check(domain, prog)
-            if not result["allowed"]:
-                add_history(domain, "scope_guard",
-                            f"REJECTED ({username}): {result['reason']}")
-                emit(f"Scope Guard rejected {domain}: {result['reason']}",
-                     "WARNING", "scope_guard")
-                continue
+        result = _scope_gate(domain)
+        if not result["allowed"]:
+            add_history(domain, "scope_guard",
+                        f"REJECTED ({username}): {result['reason']}")
+            emit(f"Scope Guard rejected {domain}: {result['reason']}",
+                 "WARNING", "scope_guard")
+            continue
         job = Job(domain, username, options)
         with _lock:
             _jobs[job.id] = job
@@ -2170,6 +2191,29 @@ _RECON_SCRIPTS_DIR = os.path.join(_BASE, "scripts", "recon")
 _phase_runs: Dict[str, str] = {}            # target -> shared DATESTAMP for the run
 # target -> {phase_id: {status, job_id, at, added}} — last per-phase outcome for the UI.
 _phase_status: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+def _phase_tool_meta(tool_keys: List[str],
+                     tools_cfg: Dict[str, Dict]) -> List[Dict[str, Any]]:
+    """Static, secret-free tool metadata for the Command Forge UI.
+
+    Returns each tool's cmd *template* straight from the merged tool config —
+    placeholders like ``$DOMAIN$`` / ``$GITHUB_TOKEN$`` are literal text and are
+    NEVER resolved here, so no secret value (token, key, wordlist path) is ever
+    substituted server-side and sent to the client. The frontend does the cosmetic
+    $TARGET$ substitution for display only. Phase tool keys that use hyphens
+    (e.g. ``github-subdomains``) are normalized to the underscore tool id.
+    """
+    meta: List[Dict[str, Any]] = []
+    for tk in tool_keys:
+        t = tools_cfg.get(tk.replace("-", "_"), {})
+        meta.append({
+            "key":         tk,
+            "name":        t.get("name", tk),
+            "cmd":         t.get("cmd") or None,
+            "type":        t.get("type"),
+            "description": t.get("description", ""),
+        })
+    return meta
 
 def _run_datestamp(target: str, fresh: bool = False) -> str:
     with _lock:
@@ -3430,13 +3474,16 @@ class ReconHandler(BaseHTTPRequestHandler):
             running = {j.options.get("phase"): j.id for j in _jobs.values()
                        if j.options.get("phase") and j.domain == target}
         ds = _phase_runs.get(target) if target else None
+        tools_cfg = get_tools_config()
         phases = []
         for p in PIPELINE_PHASES:
             s = st.get(p["id"], {})
             is_running = p["id"] in running
             phases.append({
                 "id": p["id"], "num": p["num"], "label": p["label"],
-                "risk": p["risk"], "tools": p["tools"], "ingests": bool(p.get("ingest")),
+                "risk": p["risk"], "tools": p["tools"],
+                "tool_meta": _phase_tool_meta(p["tools"], tools_cfg),
+                "ingests": bool(p.get("ingest")),
                 "status": "running" if is_running else s.get("status"),
                 "job_id": running.get(p["id"]) or s.get("job_id"),
                 "added": s.get("added"), "at": s.get("at"),
@@ -3477,13 +3524,11 @@ class ReconHandler(BaseHTTPRequestHandler):
             return self._err(f"unknown phase: {phase_id}")
         # Scope Guard (doctrine: gate before any tool spawns). The phase script
         # also checks SCOPE_FILE, but refuse here so we never even enqueue.
-        prog = _active_program()
-        if prog is not None:
-            res = scope_guard.check(target, prog)
-            if not res.get("allowed"):
-                add_history(target, "scope_guard",
-                            f"phase {phase_id} REFUSED: {res.get('reason')}")
-                return self._err(f"out of scope: {res.get('reason')}", 403)
+        res = _scope_gate(target)
+        if not res.get("allowed"):
+            add_history(target, "scope_guard",
+                        f"phase {phase_id} REFUSED: {res.get('reason')}")
+            return self._err(f"out of scope: {res.get('reason')}", 403)
         job = submit_phase(target, phase_id, session["username"], fresh=bool(body.get("fresh")))
         self._ok({"job_id": job.id, "phase": phase_id,
                   "datestamp": job.options.get("datestamp")}, f"phase {phase_id} queued")
@@ -3543,12 +3588,10 @@ class ReconHandler(BaseHTTPRequestHandler):
             return self._err("invalid target (must be a hostname, domain, wildcard, or IP)")
         # Scope Guard gate before enqueue (the in-pipeline ScopeGuard agent also
         # gates, but refuse here so an out-of-scope run never even starts).
-        prog = _active_program()
-        if prog is not None:
-            res = scope_guard.check(target, prog)
-            if not res.get("allowed"):
-                add_history(target, "scope_guard", f"agentic run REFUSED: {res.get('reason')}")
-                return self._err(f"out of scope: {res.get('reason')}", 403)
+        res = _scope_gate(target)
+        if not res.get("allowed"):
+            add_history(target, "scope_guard", f"agentic run REFUSED: {res.get('reason')}")
+            return self._err(f"out of scope: {res.get('reason')}", 403)
         with _lock:
             if any(j.options.get("agentic") and j.domain == target for j in _jobs.values()):
                 return self._err("an agentic run is already in progress for this target", 409)

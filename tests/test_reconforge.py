@@ -39,6 +39,11 @@ def isolated_db(tmp_path):
     M._cfg_cache.clear()
     M._rate_delay = 0.0
     M.init_db()
+    # These tests exercise job scheduling / pipeline mechanics, not scope. Opt
+    # into unscoped submission so the fail-closed Scope Guard doesn't reject the
+    # throwaway targets they enqueue. (allow_unscoped only applies when no active
+    # program is set; a test that configures one still gets full enforcement.)
+    M.set_config("allow_unscoped", True)
     yield
     # Teardown: close connection
     try:
