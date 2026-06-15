@@ -1,6 +1,6 @@
 import {
   Gauge, Target, Shield, Radar, Crosshair, Globe, FileText, Layers, Eye,
-  GitBranch, Zap, Database, AlertTriangle, Clock, Activity, Bell, Cpu, Command,
+  GitBranch, Zap, Database, AlertTriangle, Clock, Activity, Bell, Cpu, Command, Bot,
 } from "lucide-react";
 
 // Methodology-first navigation. Operations/Admin groups preserve existing tabs.
@@ -10,6 +10,7 @@ export const SIDEBAR = [
   { g: "Recon", items: [["passive", "Passive Recon", Radar], ["active", "Active Recon", Crosshair], ["urls", "URL Collection", Globe], ["js", "JavaScript Mining", FileText]] },
   { g: "Map", items: [["surface", "Asset Map", Layers], ["fingerprint", "Tech Fingerprint", Eye], ["params", "Parameters", GitBranch]] },
   { g: "Test", items: [["xss", "XSS", Zap], ["sqli", "SQLi", Database], ["auth", "Auth / API", Shield], ["takeover", "Subdomain Takeover", Globe]] },
+  { g: "Methodology", items: [["ai-api-fuzzing", "AI API Fuzzing", Bot]] },
   { g: "Evidence", items: [["findings", "Findings", AlertTriangle], ["timeline", "Timeline", Clock]] },
   { g: "Report", items: [["export", "Export", FileText]] },
   { g: "Operations", items: [["jobs", "Jobs", Activity], ["monitors", "Monitors", Bell], ["resources", "Resources", Cpu]] },
@@ -33,7 +34,7 @@ export const AGENTS = [
 export const RISK_MODES = [
   ["passive", "Passive Only", "No traffic to the target — OSINT, archives, certificate logs."],
   ["passive_active", "Passive + Active", "Adds resolution, probing, crawling. Sends traffic to the target."],
-  ["full", "Full Authorized Testing", "Includes aggressive workflows — fuzzing, XSS, SQLi. Authorized scope only."],
+  ["full", "Full Exploitation", "Includes aggressive workflows — fuzzing, XSS, SQLi, exploitation."],
 ];
 
 // Methodology workspaces. Each maps a sidebar route to a set of kill-chain
@@ -53,7 +54,7 @@ export const PHASE_PAGES = {
     title: "Active Recon",
     sub: "Resolve, fingerprint, and probe the live surface. These workflows send traffic to the target.",
     phases: ["resolve", "tls-cdn", "port-scan", "http-probe", "crawl"],
-    guide: "Active recon touches the target. Keep OPSEC defaults — rate limit, jitter, identifying headers — on, and confirm scope before running.",
+    guide: "Active recon touches the target. Keep OPSEC defaults — rate limit, jitter, identifying headers — on.",
   },
   urls: {
     eyebrow: "Recon · URLs",
@@ -94,17 +95,17 @@ export const PHASE_PAGES = {
   sqli: {
     eyebrow: "Test · SQL Injection",
     title: "SQLi",
-    sub: "Gated SQL injection testing against authorized, non-production targets.",
+    sub: "SQL injection — from detection differential to data, files, and command execution.",
     phases: ["sqli"],
     risk: "aggressive",
-    guide: "SQLi is gated for a reason: scope and Safe-Harbor first, never against production data. Prefer read-only enumeration (--dbs) before anything that could mutate.",
+    guide: "Provoke a differential the DB can't hide — error, boolean, or timing — confirm the injection, then escalate: dump the schema, read/write files, and pivot to command execution where the stack allows.",
   },
   auth: {
     eyebrow: "Test · Auth / API",
     title: "Auth / API",
     sub: "Probe authentication flows and API surfaces — GraphQL, REST, JWT.",
     phases: ["http-probe", "vuln-scan"],
-    guide: "APIs are where the high bounties live. Map every resolver/route, then test object-level authorization (IDOR) on each mutation that takes an id.",
+    guide: "APIs are where the critical bugs live. Map every resolver/route, then test object-level authorization (IDOR) on each mutation that takes an id.",
   },
   takeover: {
     eyebrow: "Test · Subdomain Takeover",
@@ -123,6 +124,7 @@ export const PALETTE_ACTIONS = [
   ["Go to Active Recon", "recon", Crosshair, "active"],
   ["Generate XSS commands", "cmd", Zap, "xss"],
   ["Generate SQLi commands", "cmd", Database, "sqli"],
+  ["Open AI API Fuzzing methodology", "method", Bot, "ai-api-fuzzing"],
   ["Open Findings board", "evidence", AlertTriangle, "findings"],
   ["Open Asset Map", "map", Layers, "surface"],
   ["Export to vault", "export", FileText, "export"],

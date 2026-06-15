@@ -267,6 +267,43 @@ body{background:var(--bg-main);color:var(--tx-1);font-family:var(--sans);font-si
 .empty.big.err{color:var(--err);}
 .empty.big b{color:var(--pp-hi);}
 
+/* reference methodology workspace (narrative playbook, not Command Forge) */
+.method .ws-head .msrc{display:inline-flex;align-items:center;gap:7px;max-width:100%;font-family:var(--mono);font-size:10.5px;color:var(--tx-3);text-decoration:none;border:1px solid var(--bd-muted);border-radius:var(--r);padding:6px 10px;background:var(--bg-soft);}
+.method .ws-head .msrc:hover{color:var(--pp-hi);border-color:var(--pp);}
+.method .ws-head .msrc svg{color:var(--pp-hi);flex:none;}
+.method .ws-head .msrc span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mnote{font-family:var(--mono);font-size:10.5px;color:var(--tx-3);margin-bottom:14px;padding:8px 12px;background:var(--bg-elev);border:1px solid var(--bd-soft);border-radius:var(--r);}
+.mp-sum{margin:0 0 10px;color:var(--tx-2);font-size:12.5px;line-height:1.55;}
+.mp-points{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:7px;}
+.mp-points li{color:var(--tx-2);font-size:12px;line-height:1.55;}
+.mp-points li::marker{color:var(--pp-hi);}
+.mp-tools{display:flex;flex-direction:column;gap:6px;margin-top:11px;}
+.mp-tools code{font-family:var(--mono);font-size:11.5px;color:var(--tx-1);background:var(--bg-input);border:1px solid var(--bd-soft);border-radius:var(--r);padding:8px 11px;white-space:pre-wrap;word-break:break-word;}
+.mp-note{margin-top:11px;border-radius:var(--r);padding:9px 12px;font-size:11.5px;line-height:1.5;color:var(--tx-1);border-left:2px solid;}
+.mp-note.hook{background:var(--ok-soft);border-color:var(--ok);}
+.mp-note.tip{background:var(--pp-soft);border-color:var(--pp);}
+.mp-note.warn{background:var(--warn-soft);border-color:var(--warn);}
+.pattern-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px;}
+.pcard{background:var(--bg-elev);border:1px solid var(--bd-muted);border-radius:var(--r-lg);padding:12px 13px;display:flex;flex-direction:column;gap:7px;}
+.pcard-t{font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--pp-hi);}
+.pcard-b{font-size:12px;color:var(--tx-2);line-height:1.5;}
+.pcard-a{font-size:11.5px;color:var(--tx-2);line-height:1.5;border-top:1px solid var(--bd-soft);padding-top:7px;margin-top:auto;}
+.pcard-a b{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--ok);margin-right:7px;}
+/* sub-headings, section labels, and the "deeper" refs footer */
+.mp-subh{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--tx-3);margin:14px 0 8px;}
+.msec{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--pp-hi);margin:18px 0 9px;}
+.mrefs{display:flex;flex-direction:column;gap:5px;margin-top:14px;padding:11px 14px;background:var(--bg-elev);border:1px solid var(--bd-soft);border-radius:var(--r-lg);font-family:var(--mono);font-size:10.5px;color:var(--tx-2);}
+.mrefs b{color:var(--tx-4);text-transform:uppercase;letter-spacing:.1em;font-size:9px;font-weight:700;}
+/* interactive (operator-toggled) checklist — extends the phase .chk look */
+.method .chk{align-items:flex-start;}
+.method .chk .box{margin-top:1px;}
+.method .chk .cklabel{white-space:normal;line-height:1.5;}
+.method .chk.click{cursor:pointer;}
+.method .chk.click:hover{background:var(--bg-soft);}
+.method .chk.click:focus-visible{outline:1px solid var(--pp);outline-offset:-1px;}
+.chk.on .box{border-color:var(--ok);color:var(--ok);background:var(--ok-soft);}
+.chk.on .cklabel{color:var(--tx-1);}
+
 /* intake form */
 .intake-grid{align-items:start;}
 .form{display:flex;flex-direction:column;gap:13px;}
@@ -312,4 +349,4 @@ body{background:var(--bg-main);color:var(--tx-1);font-family:var(--sans);font-si
   .spin{animation:none !important;}
 }
 @media (max-width:1180px){ .tiles{grid-template-columns:repeat(3,1fr);} .row2,.row3{grid-template-columns:1fr;} }
-@media (max-width:760px){ .grid{grid-template-columns:1fr;} .side{display:none;} .tiles{grid-template-columns:repeat(2,1fr);} .ctx{display:none;} .frow,.seg{grid-template-columns:1fr;} .forge-ctx .ingests{margin-left:0;} }
+@media (max-width:760px){ .grid{grid-template-columns:1fr;} .side{display:none;} .tiles{grid-template-columns:repeat(2,1fr);} .ctx{display:none;} .frow,.seg{grid-template-columns:1fr;} .forge-ctx .ingests{margin-left:0;} .pattern-grid{grid-template-columns:1fr;} }

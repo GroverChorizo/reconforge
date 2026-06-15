@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useLiveState } from "./useLiveState.js";
 import { SIDEBAR, PHASE_PAGES } from "./constants.js";
+import { METHODOLOGIES } from "./data/methodologies.js";
 import Header from "./components/Header.jsx";
 import KillChainRail from "./components/KillChainRail.jsx";
 import Sidebar from "./components/Sidebar.jsx";
@@ -10,6 +11,7 @@ import CommandPalette from "./components/CommandPalette.jsx";
 import Intake from "./components/workspace/Intake.jsx";
 import Scope from "./components/workspace/Scope.jsx";
 import PhaseWorkspace from "./components/workspace/PhaseWorkspace.jsx";
+import MethodologyWorkspace from "./components/workspace/MethodologyWorkspace.jsx";
 
 const LABELS = Object.fromEntries(
   SIDEBAR.flatMap((g) => g.items.map(([id, label]) => [id, label]))
@@ -82,6 +84,8 @@ export default function App() {
     if (route === "scope") return <Scope view={view} onNav={setRoute} />;
     if (PHASE_PAGES[route])
       return <PhaseWorkspace route={route} view={view} target={target} guide={guide} onEvent={onEvent} />;
+    if (METHODOLOGIES[route])
+      return <MethodologyWorkspace route={route} view={view} target={target} guide={guide} onEvent={onEvent} />;
     return <Placeholder route={route} />;
   }
 

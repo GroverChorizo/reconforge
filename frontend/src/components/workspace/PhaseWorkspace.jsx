@@ -1,16 +1,23 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Info, AlertTriangle } from "lucide-react";
+import { RefreshCw, Info, AlertTriangle, Crosshair, GitBranch, ShieldCheck } from "lucide-react";
 import { api } from "../../api.js";
 import { PHASE_PAGES } from "../../constants.js";
+import { VULN_PLAYBOOKS } from "../../data/vulnPlaybooks.js";
 import CommandForge from "./CommandForge.jsx";
 import { TargetStrip, Checklist } from "./bits.jsx";
+import { Panel, SectionLabel, Bullets, PhaseList, PatternGrid, MethodChecklist } from "./methodology.jsx";
 
 /* Generic methodology workspace. Reads the kill-chain phases for the active
    target from /api/pipeline, filters to this route's phase ids, and renders a
-   Command Forge per phase plus a status checklist. Pure presentation of the
-   existing pipeline — it never starts a run. */
+   Command Forge per phase plus a status checklist. When a route also has a
+   VULN_PLAYBOOK (xss/sqli/auth/takeover), the narrative methodology — overview,
+   how-to-test steps, variant cards, chaining, confirm-before-report — wraps
+   around the Command Forge. The playbook is target-independent reference and
+   renders even before a target is loaded; only the commands need a target.
+   Pure presentation of the existing pipeline — it never starts a run. */
 export default function PhaseWorkspace({ route, view, target, guide, onEvent }) {
   const cfg = PHASE_PAGES[route];
+  const pb = VULN_PLAYBOOKS[route];
   const [phases, setPhases] = useState(null);
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -35,8 +42,41 @@ export default function PhaseWorkspace({ route, view, target, guide, onEvent }) 
   const output = `ResearchVault/BugBounty/${target || "—"}/`;
   const aggressive = cfg.risk === "aggressive" || (phases || []).some((p) => p.risk === "aggressive");
 
+  function renderCommands() {
+    if (!target) {
+      return (
+        <div className="panel">
+          <div className="empty big">
+            {pb ? (
+              <>Load a target in <b>Intake</b> to forge the commands for this workflow — the methodology applies to any target.</>
+            ) : (
+              <>No target loaded. Open <b>Intake</b> to declare a program and scope — this workspace then forges commands for it.</>
+            )}
+          </div>
+        </div>
+      );
+    }
+    if (err) return <div className="panel"><div className="empty big err">Could not load phases — {err}</div></div>;
+    if (!phases) return <div className="panel"><div className="empty big">Loading phases…</div></div>;
+    if (phases.length === 0) {
+      if (pb) return null;
+      return <div className="panel"><div className="empty big">No phases mapped to this workspace.</div></div>;
+    }
+    return (
+      <>
+        {pb && <SectionLabel>Run it · Command Forge</SectionLabel>}
+        <Checklist phases={phases} />
+        <div className="forge-stack">
+          {phases.map((p) => (
+            <CommandForge key={p.id} phase={p} target={target} output={output} onEvent={onEvent} />
+          ))}
+        </div>
+      </>
+    );
+  }
+
   return (
-    <main className="ws">
+    <main className={`ws${pb ? " method" : ""}`}>
       <div className="ws-head">
         <div className="ws-title">
           <div className="ey">{cfg.eyebrow}</div>
@@ -54,8 +94,8 @@ export default function PhaseWorkspace({ route, view, target, guide, onEvent }) 
         <div className="risknote">
           <AlertTriangle size={14} />
           <span>
-            Aggressive workflow — these tools send active payloads to the target. Confirm scope and
-            authorization first. Commands here are copy-only and never auto-run.
+            Active workflow — these tools send live payloads to the target. Copy-only; nothing
+            auto-runs from here.
           </span>
         </div>
       )}
@@ -67,27 +107,54 @@ export default function PhaseWorkspace({ route, view, target, guide, onEvent }) 
         </div>
       )}
 
-      {!target ? (
-        <div className="panel">
-          <div className="empty big">
-            No target loaded. Open <b>Intake</b> to declare a program and scope — this workspace then
-            forges commands for it.
-          </div>
-        </div>
-      ) : err ? (
-        <div className="panel"><div className="empty big err">Could not load phases — {err}</div></div>
-      ) : !phases ? (
-        <div className="panel"><div className="empty big">Loading phases…</div></div>
-      ) : phases.length === 0 ? (
-        <div className="panel"><div className="empty big">No phases mapped to this workspace.</div></div>
-      ) : (
+      {/* methodology — overview + how-to-test (before the commands) */}
+      {pb && (
         <>
-          <Checklist phases={phases} />
-          <div className="forge-stack">
-            {phases.map((p) => (
-              <CommandForge key={p.id} phase={p} target={target} output={output} onEvent={onEvent} />
-            ))}
-          </div>
+          <Panel icon={Info} title="Overview" style={{ marginBottom: 14 }}>
+            <p className="mp-sum">{pb.intro}</p>
+            {pb.signals && <><div className="mp-subh">Detection signals</div><Bullets items={pb.signals} /></>}
+          </Panel>
+          {pb.method && (
+            <>
+              <SectionLabel>How to test</SectionLabel>
+              <PhaseList phases={pb.method} />
+            </>
+          )}
+        </>
+      )}
+
+      {renderCommands()}
+
+      {/* methodology — variants, chaining, confirm-before-report (after the commands) */}
+      {pb && (
+        <>
+          {pb.patterns && (
+            <Panel icon={Crosshair} title="Variants & sub-techniques" meta={`${pb.patterns.length} variants`} style={{ marginTop: 14 }}>
+              <PatternGrid patterns={pb.patterns} />
+            </Panel>
+          )}
+          {pb.chain && (
+            <Panel icon={GitBranch} title="Chaining & escalation" style={{ marginTop: 14 }}>
+              <Bullets items={pb.chain} />
+            </Panel>
+          )}
+          {pb.confirm && (
+            <Panel icon={ShieldCheck} title="Before you report" style={{ marginTop: 14 }}>
+              {pb.confirm.pitfalls && <Bullets items={pb.confirm.pitfalls} />}
+              {pb.confirm.checklist && (
+                <>
+                  <div className="mp-subh">Confirm before submitting</div>
+                  <MethodChecklist storageKey={`${route}-confirm`} items={pb.confirm.checklist} onEvent={onEvent} />
+                </>
+              )}
+            </Panel>
+          )}
+          {pb.refs && (
+            <div className="mrefs">
+              <b>Deeper</b>
+              {pb.refs.map((r, i) => <span key={i}>{r}</span>)}
+            </div>
+          )}
         </>
       )}
     </main>
