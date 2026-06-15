@@ -4,18 +4,13 @@ Covers:
   * tools.registry safety_class on every spec; MODE_ALLOWLISTS shape;
     tools_for_mode / is_tool_allowed_in_mode lookups; safety_class_of
     falls back to 'disabled' for unknown tools.
-  * core.opsec ModeViolation; assert_tool_allowed gates correctly per mode;
-    preflight() returns the expected envelope including rate-limit
-    minimum logic; render_command_preview substitutes $DOMAIN$/$TARGET$.
-  * core.workflows baseline registry covers all 7 operator modes; each
-    workflow's tool list is mode-consistent.
-  * tools.registry.dispatch refuses with a "mode gate refused" ToolResult
-    when called with a passive mode against an active-class tool.
-  * agents.hunter.select_playbooks filters by mode (passive_recon → []).
+  * core.opsec advisory mode/preflight behavior.
+  * core.workflows registry includes the seven baseline operator-mode
+    workflows plus optional research/methodology workflows.
+  * tools.registry.dispatch behavior for known and unknown tools.
+  * agents.hunter.select_playbooks signal selection.
   * core.pipeline.run_agentic_pipeline sets ctx.inputs["mode"].
-  * api.routes.jobs_preflight returns correct shape for allowed +
-    out-of-scope + mode-blocked cases.
-  * api.server.dispatch routes the three new endpoints.
+  * api.routes.jobs_preflight and api.server.dispatch workflow endpoints.
 """
 from __future__ import annotations
 
@@ -84,6 +79,13 @@ class TestRegistrySafetyClass:
         for name in ("nuclei", "graphw00f", "clairvoyance", "inql"):
             assert R.safety_class_of(name) == "mod_active"
 
+    def test_research_tools_are_passive(self):
+        for name in (
+            "church_reference_catalog", "mitre_attack_mapper",
+            "bug_chain_mapper", "framework_signal_mapper",
+        ):
+            assert R.safety_class_of(name) == "passive"
+
     def test_unknown_tool_falls_back_to_disabled(self):
         assert R.safety_class_of("notarealtool") == "disabled"
 
@@ -130,7 +132,6 @@ class TestModeAllowlists:
 class TestOpsecModeGate:
 
     def test_passive_no_longer_rejects_active_tool(self):
-        # Phase B removed mode refusal — the assert is now a no-op.
         opsec.assert_tool_allowed("nuclei", "passive_recon")
 
     def test_passive_allows_passive_tool(self):
@@ -140,8 +141,6 @@ class TestOpsecModeGate:
         opsec.assert_tool_allowed("httpx", "active_recon")
 
     def test_unknown_tool_no_longer_blocked(self):
-        # Unknown tool used to raise; now it returns (refusal happens
-        # later in dispatch on "unknown tool", not at the mode gate).
         opsec.assert_tool_allowed("notatool", "evidence_collection")
 
 
@@ -154,16 +153,12 @@ class TestOpsecPreflight:
         assert out["mode"] == "passive_recon"
 
     def test_active_tool_passive_mode_allowed_with_advisory(self):
-        # Phase B: mode no longer blocks. Preflight still surfaces the
-        # classification mismatch in the reason field so the modal can
-        # warn the operator, but allowed stays True.
         out = opsec.preflight("nuclei", "passive_recon")
         assert out["allowed"] is True
         assert "advisory" in out["reason"]
         assert out["safety_class"] == "mod_active"
 
     def test_rate_limit_takes_min_of_hint_and_default(self):
-        # hint=3, mode=active_recon default=10 → effective 3
         out = opsec.preflight("httpx", "active_recon", rate_limit_hint=3)
         assert out["rate_limit_rps"] == 3
 
@@ -187,11 +182,23 @@ class TestOpsecPreflight:
 # ── workflows ─────────────────────────────────────────────────────
 class TestWorkflows:
 
-    def test_one_workflow_per_mode(self):
+    def test_baseline_workflows_cover_every_mode(self):
         ids = {w.id for w in W.list_workflows()}
         modes = set(R.OPERATOR_MODES)
-        # Phase 15 ships one baseline workflow named after each mode.
-        assert ids == modes
+        # Baseline workflows are named after modes; research workflows may add
+        # extra ids without weakening this invariant.
+        assert modes <= ids
+        for mode in modes:
+            assert W.get_workflow(mode) is not None
+
+    def test_research_workflows_are_registered(self):
+        ids = {w.id for w in W.list_workflows()}
+        assert {
+            "proxyless_c2_research",
+            "bug_chain_cluster_hunt",
+            "framework_signal_review",
+            "smart_contract_static_review",
+        } <= ids
 
     def test_get_workflow_lookup(self):
         w = W.get_workflow("passive_recon")
@@ -202,15 +209,17 @@ class TestWorkflows:
     def test_get_workflow_missing(self):
         assert W.get_workflow("ghost") is None
 
-    def test_workflows_for_mode(self):
+    def test_workflows_for_mode_includes_baseline_and_research(self):
         out = W.workflows_for_mode("vuln_triage")
-        assert len(out) == 1
-        assert out[0].id == "vuln_triage"
+        ids = {w.id for w in out}
+        assert "vuln_triage" in ids
+        assert {
+            "bug_chain_cluster_hunt",
+            "framework_signal_review",
+            "smart_contract_static_review",
+        } <= ids
 
-    def test_baseline_workflows_are_mode_consistent(self):
-        # Every tool declared by a baseline workflow must be allowed in
-        # that workflow's own mode. This guards against drift between
-        # registry mode allowlists + workflow tool selections.
+    def test_workflows_are_mode_consistent(self):
         for w in W.list_workflows():
             bad = W.validate_workflow_against_mode(w.id)
             assert bad == [], (
@@ -224,22 +233,24 @@ class TestWorkflows:
         assert d["safety"]["default_rate_limit_rps"] == 10
         assert {t["id"] for t in d["tools"]} >= {"httpx", "gowitness"}
 
+    def test_proxyless_workflow_to_dict_exposes_research_metadata(self):
+        w = W.get_workflow("proxyless_c2_research")
+        d = w.to_dict()
+        assert d["imported_artifact_mode"] is True
+        assert d["reference_only"] is True
+        assert "TA0011" in d["attack_mapping"]
+        assert "will not launch C2 servers" in d["guardrail"]
+
 
 # ── dispatch no longer refuses on mode (post-Phase-B) ─────────────
 class TestDispatchModeGate:
 
     def test_dispatch_no_longer_refuses_active_tool_in_passive_mode(self, tmp_path):
-        # Phase B removed the mode refusal in dispatch. The call should
-        # now proceed to the tool handler (which may then fail for other
-        # reasons — missing binary, etc — but NOT with "mode gate refused").
         ctx = R.DispatchContext(
             job_id="J1", domain="acme.com",
             workdir=str(tmp_path), mode="passive_recon",
         )
         result = R.dispatch("nuclei", {"domain": "acme.com"}, ctx)
-        # We only assert the refusal *isn't* the mode gate. Real execution
-        # may fail because nuclei isn't installed in the test env or the
-        # handler raises — both are valid outcomes for this assertion.
         assert result.summary != "mode gate refused"
 
     def test_dispatch_still_refuses_unknown_tool(self, tmp_path):
@@ -256,8 +267,6 @@ class TestDispatchModeGate:
 class TestHunterPlaybookFilter:
 
     def test_passive_recon_still_picks_by_signals(self):
-        # Phase B: mode no longer filters playbooks. With graphql signal
-        # and live_hosts, the full triggered set runs regardless of mode.
         from agents.hunter import select_playbooks
         recon = {"live_hosts": 10, "signals": {"graphql_endpoints": ["/graphql"]}}
         out = select_playbooks(recon, mode="passive_recon")
@@ -269,7 +278,6 @@ class TestHunterPlaybookFilter:
         recon = {"live_hosts": 10, "signals": {"graphql_endpoints": ["/graphql"],
                                                  "login_pages": ["/login"]}}
         out = select_playbooks(recon, mode="active_recon")
-        # With both signals plus live_hosts > 0, the full set fires.
         assert set(out) == {"graphql", "jwt", "idor", "ssrf", "xss",
                              "bizlogic", "api_misconfig", "takeover"}
 
@@ -286,18 +294,13 @@ class TestHunterPlaybookFilter:
 class TestPipelineModeKwarg:
 
     def test_mode_set_in_inputs(self, db):
-        from agents.base import AgentContext
+        from agents.base import AgentContext, AgentResult
         from core.pipeline import run_agentic_pipeline
-        # Stub agents so the pipeline returns immediately. ScopeGuard
-        # success path doesn't short-circuit; downstream agents skip
-        # cleanly when stubs return success.
-        from agents.base import AgentResult
 
         class _Stub:
             name = "stub"
             def __init__(self, db=None, emit_fn=None): pass
             def run(self, ctx):
-                # Capture the mode the orchestrator set on ctx.
                 self.observed_mode = (ctx.inputs or {}).get("mode")
                 return AgentResult(agent="stub", success=True, output=None)
 
@@ -319,6 +322,7 @@ class TestPipelineModeKwarg:
 
     def test_default_mode_is_passive(self, db):
         from agents.base import AgentContext, AgentResult
+        from core.pipeline import run_agentic_pipeline
 
         class _Stub:
             name = "stub"
@@ -333,7 +337,6 @@ class TestPipelineModeKwarg:
         class _AN(_Stub): name = "analyst"
         class _RP(_Stub): name = "reporter"
 
-        from core.pipeline import run_agentic_pipeline
         ctx = AgentContext(job_id="J2", program={"in_scope": [{"type": "domain", "value": "acme.com"}]},
                            inputs={"domain": "acme.com"}, db=db)
         run_agentic_pipeline(ctx, agents={
@@ -356,7 +359,7 @@ class TestPreflightRoute:
         assert out["allowed_methods"] == ["GET", "POST"]
         assert out["disallowed_methods"] == ["DELETE"]
         assert "fragile" in out["scope_rule_notes"]
-        assert out["rate_limit_rps"] == 0   # passive mode default
+        assert out["rate_limit_rps"] == 0
 
     def test_out_of_scope_blocked(self, acme, db):
         out = routes.jobs_preflight(db, {
@@ -367,9 +370,6 @@ class TestPreflightRoute:
         assert "out_of_scope" in out["reason"]
 
     def test_mode_no_longer_blocks_active_tool_in_passive(self, acme, db):
-        # Phase B removed the mode refusal. Preflight returns allowed=True
-        # for in-scope targets regardless of safety_class vs mode, and
-        # the reason field carries the advisory text instead.
         out = routes.jobs_preflight(db, {
             "program_slug": acme.slug, "target": "api.acme.com",
             "mode": "passive_recon", "tool": "nuclei",
@@ -384,12 +384,9 @@ class TestPreflightRoute:
             "mode": "active_recon", "tool": "httpx",
         })
         assert isinstance(out["command_preview"], list)
-        # The preview keeps placeholders that depend on a live job.
         assert any("$INPUT_FILE$" in p for p in out["command_preview"])
 
     def test_rate_limit_honors_rule_hint(self, acme, db):
-        # Scope rule hints rate_limit_rps_hint=5; active_recon default=10.
-        # Effective = min(5, 10) = 5.
         out = routes.jobs_preflight(db, {
             "program_slug": acme.slug, "target": "api.acme.com",
             "mode": "active_recon", "tool": "httpx",
@@ -416,7 +413,8 @@ class TestPhase15Dispatch:
     def test_workflows_list(self, db):
         status, body = server.dispatch("GET", "/api/v2/workflows", {}, None, db)
         assert status == 200
-        assert body["count"] == len(R.OPERATOR_MODES)
+        assert body["count"] == len(W.list_workflows())
+        assert body["count"] >= len(R.OPERATOR_MODES)
 
     def test_workflow_detail(self, db):
         status, body = server.dispatch(
@@ -424,6 +422,14 @@ class TestPhase15Dispatch:
         )
         assert status == 200
         assert body["workflow"]["mode"] == "passive_recon"
+
+    def test_research_workflow_detail(self, db):
+        status, body = server.dispatch(
+            "GET", "/api/v2/workflows/proxyless_c2_research", {}, None, db,
+        )
+        assert status == 200
+        assert body["workflow"]["imported_artifact_mode"] is True
+        assert body["workflow"]["safety"]["default_rate_limit_rps"] == 0
 
     def test_workflow_detail_404(self, db):
         status, body = server.dispatch(
@@ -441,8 +447,6 @@ class TestPhase15Dispatch:
         assert body["allowed"] is True
 
     def test_preflight_route_mode_no_longer_blocks_in_scope(self, acme, db):
-        # Phase B: in-scope tool is always allowed; safety_class advisory
-        # is in reason but does not block.
         status, body = server.dispatch(
             "POST", "/api/v2/jobs/preflight", {},
             {"program_slug": acme.slug, "target": "api.acme.com",
