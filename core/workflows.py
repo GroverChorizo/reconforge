@@ -124,10 +124,33 @@ _BASELINES: List[Workflow] = [
         requires_approval=True,
         scope_required=True,
         inputs=["live_hosts"],
-        outputs=["endpoints"],
+        outputs=["endpoints", "parameters", "api_routes"],
         tools=[
-            # Tools land in Phase 21 (ffuf workflow YAML). Phase 15 baseline
-            # advertises the slot; the registry has no ffuf entry yet.
+            # crawl + historical URL mining (cheap, run first)
+            WorkflowToolStep(id="katana",      description="Headless SPA-aware crawl."),
+            WorkflowToolStep(id="gau",          description="Historical URLs (wayback/OTX/commoncrawl)."),
+            WorkflowToolStep(id="waybackurls",  description="Wayback Machine URL mining.",
+                              optional=True),
+            WorkflowToolStep(id="hakrawler",    description="Fast crawl of in-scope hosts.",
+                              optional=True),
+            # active content discovery
+            WorkflowToolStep(id="feroxbuster",  description="Recursive content/route brute-force."),
+            WorkflowToolStep(id="ffuf",         description="Web fuzzer for content/parameters (FUZZ keyword).",
+                              optional=True),
+            WorkflowToolStep(id="dirsearch",    description="Path/extension content discovery.",
+                              optional=True),
+            # parameter discovery
+            WorkflowToolStep(id="paramspider",  description="Mine parameters from archived URLs.",
+                              optional=True),
+            WorkflowToolStep(id="arjun",        description="Probe-based parameter discovery.",
+                              optional=True),
+            WorkflowToolStep(id="x8",           description="Hidden HTTP parameter discovery.",
+                              optional=True),
+            # API surface (adaptive — fire when a spec/route signal appears)
+            WorkflowToolStep(id="kiterunner",    description="API route discovery from Swagger corpus.",
+                              optional=True),
+            WorkflowToolStep(id="swagger_jacker", description="OpenAPI/Swagger endpoint extraction.",
+                              optional=True),
         ],
         safety=WorkflowSafety(
             traffic_level="moderate",
@@ -218,6 +241,41 @@ _BASELINES: List[Workflow] = [
         safety=WorkflowSafety(
             traffic_level="low",
             default_rate_limit_rps=5,
+            blocked_if_scope_unknown=True,
+        ),
+    ),
+    # ── defensive C2 research ─────────────────────────────────────
+    # Detection / taxonomy / evidence workflow around proxyless (direct)
+    # C2 concepts. Analyses *local* artifacts (PCAP/Zeek/Suricata/logs) and
+    # maps evidence to ATT&CK. It NEVER deploys, operates, or generates C2 —
+    # core.research_guard enforces that at the behaviour level, and the tool
+    # steps here are all local telemetry/taxonomy (zero target traffic).
+    Workflow(
+        id="proxyless_c2_research",
+        name="Proxyless C2 Research",
+        mode="evidence_collection",
+        description=(
+            "Authorized malware-research taxonomy, local telemetry analysis, and "
+            "defensive reporting around proxyless/direct-C2 concepts. ReconForge "
+            "may catalog C2 concepts and analyze local artifacts, but it will NOT "
+            "launch C2 servers, implants, payloads, reverse shells, persistence, "
+            "or callback infrastructure."
+        ),
+        requires_approval=True,
+        scope_required=True,
+        inputs=[
+            "pcap_file", "zeek_log_dir", "suricata_eve_json", "dns_logs",
+            "http_logs", "tls_logs", "target_scope", "lab_notes",
+        ],
+        outputs=[
+            "proxyless_c2_summary.json", "proxyless_c2_detection_notes.md",
+            "mitre_attack_mapping.json", "evidence_bundle/",
+            "reference_taxonomy.json",
+        ],
+        tools=[],   # local telemetry analyzers; all default traffic_level "none"
+        safety=WorkflowSafety(
+            traffic_level="none",
+            default_rate_limit_rps=0,
             blocked_if_scope_unknown=True,
         ),
     ),

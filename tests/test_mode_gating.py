@@ -187,11 +187,17 @@ class TestOpsecPreflight:
 # ── workflows ─────────────────────────────────────────────────────
 class TestWorkflows:
 
-    def test_one_workflow_per_mode(self):
+    def test_baseline_workflow_per_mode(self):
         ids = {w.id for w in W.list_workflows()}
         modes = set(R.OPERATOR_MODES)
-        # Phase 15 ships one baseline workflow named after each mode.
-        assert ids == modes
+        # Each operator mode still ships its named baseline workflow ...
+        assert modes <= ids
+        # ... and any extra workflows are the known research additions
+        # (which reuse an existing mode rather than inventing one).
+        RESEARCH_WORKFLOWS = {"proxyless_c2_research"}
+        assert ids - modes <= RESEARCH_WORKFLOWS
+        for extra in ids - modes:
+            assert W.get_workflow(extra).mode in modes
 
     def test_get_workflow_lookup(self):
         w = W.get_workflow("passive_recon")
@@ -416,7 +422,9 @@ class TestPhase15Dispatch:
     def test_workflows_list(self, db):
         status, body = server.dispatch("GET", "/api/v2/workflows", {}, None, db)
         assert status == 200
-        assert body["count"] == len(R.OPERATOR_MODES)
+        # one baseline per mode, plus any research workflows that reuse a mode
+        assert body["count"] == len(W.list_workflows())
+        assert body["count"] >= len(R.OPERATOR_MODES)
 
     def test_workflow_detail(self, db):
         status, body = server.dispatch(

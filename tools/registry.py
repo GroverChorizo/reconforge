@@ -595,6 +595,18 @@ REGISTRY: Dict[str, ToolSpec] = {
         timeout=1200,
         safety_class="low_active",
     ),
+    "ffuf": ToolSpec(
+        name="ffuf", category="adaptive", technique="T1595.003",
+        description=(
+            "Fast web fuzzer for content + parameter discovery. The FUZZ "
+            "keyword marks the injection point; lighter-traffic default than "
+            "feroxbuster, so prefer it on throttle-sensitive programs."
+        ),
+        input_schema=_TARGET_SCHEMA, handler="adaptive", adaptive=True,
+        cmd_template="ffuf -u https://$TARGET$/FUZZ -w $WORDLIST$ -o $OUTPUT$ -of json -s",
+        timeout=1800,
+        safety_class="mod_active",
+    ),
     "feroxbuster": ToolSpec(
         name="feroxbuster", category="adaptive", technique="T1595.003",
         description=(
