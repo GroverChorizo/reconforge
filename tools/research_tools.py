@@ -19,7 +19,7 @@ _LOCAL_ARTIFACT_SCHEMA: Dict[str, Any] = {
     "properties": {
         "target": {
             "type": "string",
-            "description": "Local artifact path to analyze, such as a PCAP, Zeek log, Suricata eve.json, Sigma rule, or source snapshot.",
+            "description": "Local artifact path to analyze, such as a PCAP, Zeek log, Suricata eve.json, Sigma rule, binary sample, crash log, or source snapshot.",
         }
     },
     "required": ["target"],
@@ -283,6 +283,82 @@ def register() -> None:
         operation_type="local_static_analysis",
         network_policy="none",
         execution_policy="local_artifact_only_no_network",
+    )
+
+    # ── Shellphone / exploit-dev defensive research additions ──────
+    _register_research_tool(
+        "shellphone_reference_catalog",
+        description=(
+            "Catalog Our Blessed Connection / Shellphone concepts as exploit-development taxonomy. "
+            "Allowed use is documentation, defensive labeling, and mitigation mapping only; no shellcode generation or execution."
+        ),
+        technique="T1055",
+        handler="research_note",
+        input_schema=_REFERENCE_SCHEMA,
+        operation_type="taxonomy_only",
+        network_policy="passive_intel_only",
+        execution_policy="reference_only_no_shellcode_execution",
+    )
+    _register_research_tool(
+        "exploit_mitigation_mapper",
+        description=(
+            "Map imported crash notes, binary metadata, or exploit-dev references to mitigations such as ASLR, DEP/NX, CFG, code signing, sandboxing, and EDR telemetry."
+        ),
+        technique="T1068",
+        handler="research_note",
+        input_schema=_REFERENCE_SCHEMA,
+        operation_type="taxonomy_only",
+        network_policy="none",
+        execution_policy="mitigation_mapping_only_no_exploit_building",
+    )
+    _register_research_tool(
+        "encoded_artifact_triage",
+        description=(
+            "Review local notes or static artifacts for encoded/packed/staged-content indicators and document detection hypotheses. "
+            "Does not decode, execute, emulate, or transform shellcode."
+        ),
+        technique="T1027",
+        handler="research_note",
+        input_schema=_LOCAL_ARTIFACT_SCHEMA,
+        operation_type="local_static_analysis",
+        network_policy="none",
+        execution_policy="local_artifact_only_no_decode_execute_or_transform",
+    )
+    _register_research_tool(
+        "binary_strings_triage",
+        description="Run local strings extraction against a provided binary/log artifact to support defensive static triage notes.",
+        technique="T1027",
+        handler="local_artifact",
+        input_schema=_LOCAL_ARTIFACT_SCHEMA,
+        cmd_template="strings -a $TARGET$",
+        operation_type="local_static_analysis",
+        network_policy="none",
+        execution_policy="local_artifact_only_no_network_no_execution",
+        timeout=600,
+    )
+    _register_research_tool(
+        "memory_behavior_checklist",
+        description=(
+            "Create a defensive checklist for process-injection-like telemetry: suspicious allocation/protection changes, cross-process handles, unusual thread starts, module-load anomalies, and parent/child process context."
+        ),
+        technique="T1055",
+        handler="research_note",
+        input_schema=_LOCAL_ARTIFACT_SCHEMA,
+        operation_type="local_static_analysis",
+        network_policy="none",
+        execution_policy="checklist_only_no_process_injection",
+    )
+    _register_research_tool(
+        "exploit_dev_report_notes",
+        description=(
+            "Draft report notes for exploit-dev references and local crash/artifact evidence, including defensive impact, mitigations, and an explicit no-payload/no-execution disclaimer."
+        ),
+        technique="T1068",
+        handler="research_note",
+        input_schema=_REFERENCE_SCHEMA,
+        operation_type="taxonomy_only",
+        network_policy="none",
+        execution_policy="reporting_only_no_payload_execution",
     )
 
 
