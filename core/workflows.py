@@ -228,6 +228,49 @@ _BASELINES: List[Workflow] = [
         ],
     ),
     Workflow(
+        id="shellphone_static_research",
+        name="Shellphone Static Research",
+        mode="evidence_collection",
+        description=(
+            "Convert the Shellphone Sermon / Windows shellcode article into static defensive research: "
+            "catalog exploit-dev concepts, review imported local artifacts, map mitigations, and draft "
+            "evidence notes without generating shellcode, encoders, payloads, ROP chains, loaders, "
+            "process injection, reverse shells, or bypass automation."
+        ),
+        requires_approval=True,
+        scope_required=False,
+        imported_artifact_mode=True,
+        reference_only=True,
+        inputs=[
+            "reference_article_url", "binary_sample", "strings_output", "crash_log",
+            "sandbox_notes", "edr_alerts", "mitigation_flags", "local_source_snapshot",
+        ],
+        outputs=[
+            "shellphone_static_summary.json", "exploit_dev_detection_notes.md",
+            "mitigation_mapping.json", "artifact_triage_notes.md", "evidence_bundle/",
+        ],
+        tools=[
+            WorkflowToolStep(id="shellphone_reference_catalog", description="Catalog Shellphone concepts as defensive exploit-dev taxonomy only."),
+            WorkflowToolStep(id="encoded_artifact_triage", description="Review local static artifacts for encoded/staged-content indicators without decode or execution."),
+            WorkflowToolStep(id="binary_strings_triage", description="Extract local strings from imported artifacts for defensive triage.", optional=True),
+            WorkflowToolStep(id="memory_behavior_checklist", description="Create process-injection-like telemetry checklist without injecting into processes."),
+            WorkflowToolStep(id="exploit_mitigation_mapper", description="Map observations to ASLR/DEP/NX/CFG/signing/sandbox/EDR mitigations."),
+            WorkflowToolStep(id="exploit_dev_report_notes", description="Draft defensive report notes with no-payload/no-execution disclaimer."),
+            WorkflowToolStep(id="mitre_attack_mapper", description="Map notes to ATT&CK T1055/T1027/T1068/T1106.", optional=True),
+        ],
+        safety=WorkflowSafety(
+            traffic_level="none",
+            default_rate_limit_rps=0,
+            blocked_if_scope_unknown=False,
+        ),
+        guardrail=(
+            "Static exploit-development research only. ReconForge will not generate shellcode, build encoders, "
+            "construct ROP chains, run payloads, perform process injection, open listeners, or automate bypasses."
+        ),
+        attack_mapping=["T1055", "T1027", "T1068", "T1106"],
+        source_refs=["https://churchofmalware.org/articles/Our_Blessed_Connection_md"],
+    ),
+    Workflow(
         id="bug_chain_cluster_hunt",
         name="Bug Chain Cluster Hunt",
         mode="vuln_triage",
