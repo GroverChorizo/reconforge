@@ -1,6 +1,7 @@
 # Runtime data — never commit scan results or credentials
 recon_data/
 out/
+data/parquet/
 
 # Local program scopes — real engagement configs stay off GitHub.
 # Keep the committed templates tracked; ignore everything else under scopes/.

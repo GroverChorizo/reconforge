@@ -11,19 +11,25 @@ async function getJSON(url) {
   return j && j.data !== undefined ? j.data : j;
 }
 
-async function postJSON(url, body) {
-  const r = await fetch(url, {
-    method: "POST",
+async function sendJSON(method, url, body) {
+  const init = {
+    method,
     credentials: "include",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify(body || {}),
-  });
+    headers: { Accept: "application/json" },
+  };
+  if (body !== undefined) {
+    init.headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(body || {});
+  }
+  const r = await fetch(url, init);
   const j = await r.json().catch(() => ({}));
   if (!r.ok || j.success === false) {
     throw new Error(j.message || `${url} -> ${r.status}`);
   }
   return j && j.data !== undefined ? j.data : j;
 }
+
+const postJSON = (url, body) => sendJSON("POST", url, body || {});
 
 export const api = {
   state: () => getJSON("/api/state"),
@@ -38,4 +44,9 @@ export const api = {
   // Persist + enforce declared scope (Target Intake). After this resolves,
   // scope_guard gates every dispatch against these exact in/out-of-scope rules.
   saveScope: (body) => postJSON("/api/scope", body),
+  // Login/user accounts (admin only — backend returns 403 otherwise).
+  users: () => getJSON("/api/users"),
+  createUser: (body) => postJSON("/api/users", body),
+  updateUser: (id, body) => sendJSON("PUT", `/api/users/${id}`, body),
+  deleteUser: (id) => sendJSON("DELETE", `/api/users/${id}`),
 };

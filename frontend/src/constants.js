@@ -1,6 +1,6 @@
 import {
   Gauge, Target, Shield, Radar, Crosshair, Globe, FileText, Layers, Eye,
-  GitBranch, Zap, Database, AlertTriangle, Clock, Activity, Bell, Cpu, Command, Bot,
+  GitBranch, Zap, Database, AlertTriangle, Clock, Activity, Bell, Cpu, Command, Bot, Users,
 } from "lucide-react";
 
 // Methodology-first navigation. Operations/Admin groups preserve existing tabs.
@@ -14,6 +14,7 @@ export const SIDEBAR = [
   { g: "Evidence", items: [["findings", "Findings", AlertTriangle], ["timeline", "Timeline", Clock]] },
   { g: "Report", items: [["export", "Export", FileText]] },
   { g: "Operations", items: [["jobs", "Jobs", Activity], ["monitors", "Monitors", Bell], ["resources", "Resources", Cpu]] },
+  { g: "Admin", items: [["accounts", "Accounts", Users]] },
 ];
 
 export const RAIL = ["Target", "Scope", "Passive", "Active", "Map", "Test", "Evidence", "Report"];
@@ -125,6 +126,7 @@ export const PALETTE_ACTIONS = [
   ["Generate XSS commands", "cmd", Zap, "xss"],
   ["Generate SQLi commands", "cmd", Database, "sqli"],
   ["Open AI API Fuzzing methodology", "method", Bot, "ai-api-fuzzing"],
+  ["Manage accounts", "admin", Users, "accounts"],
   ["Open Findings board", "evidence", AlertTriangle, "findings"],
   ["Open Asset Map", "map", Layers, "surface"],
   ["Export to vault", "export", FileText, "export"],

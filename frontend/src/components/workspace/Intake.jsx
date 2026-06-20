@@ -25,7 +25,7 @@ export default function Intake({ view, target, riskMode, setRiskMode, onSaved, o
   const [f, setF] = useState({
     program: "", target: target && target !== "example.com" ? target : "",
     workspace: "", platform: "", platform_handle: "",
-    in_scope: "", out_of_scope: "",
+    in_scope: "", out_of_scope: "", vault_path: "",
   });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
@@ -46,6 +46,7 @@ export default function Intake({ view, target, riskMode, setRiskMode, onSaved, o
         platform_handle: f.platform_handle.trim(),
         in_scope: lines(f.in_scope),
         out_of_scope: lines(f.out_of_scope),
+        vault_path: f.vault_path.trim(),
       };
       await api.saveScope(body);
       setMsg({ k: "ok", t: `Scope saved & enforced for ${tgt}. Scope Guard now gates every dispatch.` });
@@ -92,8 +93,9 @@ export default function Intake({ view, target, riskMode, setRiskMode, onSaved, o
                 <input value={f.platform_handle} onChange={set("platform_handle")} placeholder="grover" spellCheck={false} />
               </Field>
             </div>
-            <Field label="Vault export path" hint="derived">
-              <input value={`ResearchVault/BugBounty/${f.workspace.trim() || f.target.trim() || "<target>"}/`} readOnly className="ro" />
+            <Field label="Vault export path" hint="optional · paste a path or leave blank for the default vault">
+              <input value={f.vault_path} onChange={set("vault_path")} spellCheck={false}
+                placeholder={`~/Documents/ResearchVault  (→ BugBounty/${f.workspace.trim() || f.target.trim() || "<target>"}/)`} />
             </Field>
           </div>
         </div>

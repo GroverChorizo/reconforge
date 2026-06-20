@@ -1194,7 +1194,8 @@ def _normalize_scope_entries(raw: Any) -> List[Dict[str, str]]:
 
 def _save_scope_program(target: str, program_name: str, workspace: str,
                         platform: str, handle: str,
-                        in_scope: Any, out_of_scope: Any) -> Tuple[Dict[str, Any], str]:
+                        in_scope: Any, out_of_scope: Any,
+                        vault_path: str = "") -> Tuple[Dict[str, Any], str]:
     """Write scopes/<slug>.json and make it the active program so scope_guard
     enforces exactly what the operator declared. Returns (program, rel_path)."""
     in_entries  = _normalize_scope_entries(in_scope)
@@ -1212,6 +1213,10 @@ def _save_scope_program(target: str, program_name: str, workspace: str,
         "in_scope": in_entries,
         "out_of_scope": out_entries,
     }
+    # Optional per-program vault export root. Empty = use the global vault_path
+    # config. Honored by _ingest_to_vault when this is the active program.
+    if (vault_path or "").strip():
+        prog["vault_path"] = vault_path.strip()
     slug = _slugify_domain(workspace or target)
     rel  = "scopes/" + slug + ".json"
     full = os.path.join(_BASE, "scopes", slug + ".json")
@@ -1286,7 +1291,12 @@ def _ingest_to_vault(run_dir) -> None:
     still requires a separate gateway commit (single-writer policy)."""
     if not get_config("auto_ingest_vault", True) or not run_dir:
         return
-    vault = os.path.expanduser(get_config("vault_path", "~/Documents/ResearchVault"))
+    # Per-program vault export root (set on Target Intake) overrides the global
+    # config; empty falls back to the global vault_path.
+    prog = _active_program() or {}
+    vault_root = (prog.get("vault_path") or "").strip() \
+        or get_config("vault_path", "~/Documents/ResearchVault")
+    vault = os.path.expanduser(vault_root)
     ingest = os.path.join(vault, "tools", "ingest_recon.py")
     if not os.path.exists(ingest):
         emit(f"vault ingest not found at {ingest}; skipping", "WARNING", "vault")
@@ -3548,6 +3558,7 @@ class ReconHandler(BaseHTTPRequestHandler):
             handle=(body.get("platform_handle") or "").strip(),
             in_scope=body.get("in_scope"),
             out_of_scope=body.get("out_of_scope"),
+            vault_path=(body.get("vault_path") or "").strip(),
         )
         # Register the target so it surfaces in /api/targets + the asset map.
         db_exec("INSERT OR IGNORE INTO targets(domain) VALUES(?)", (target,))

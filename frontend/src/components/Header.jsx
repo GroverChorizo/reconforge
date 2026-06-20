@@ -14,7 +14,7 @@ export default function Header({ view, onPalette, guide, setGuide }) {
       </div>
       <div className="hdr-r">
         <span className={`livedot ${view.live ? "on" : "off"}`}>
-          <Circle size={7} fill="currentColor" /> {view.live ? "LIVE" : "SIMULATED"}
+          <Circle size={7} fill="currentColor" /> {view.live ? "LIVE" : "OFFLINE"}
         </span>
         <button className={`gbtn ${guide ? "on" : ""}`} onClick={() => setGuide && setGuide(!guide)}
                 title="Toggle guide mode">

@@ -10,6 +10,7 @@ import Console from "./components/Console.jsx";
 import CommandPalette from "./components/CommandPalette.jsx";
 import Intake from "./components/workspace/Intake.jsx";
 import Scope from "./components/workspace/Scope.jsx";
+import Accounts from "./components/workspace/Accounts.jsx";
 import PhaseWorkspace from "./components/workspace/PhaseWorkspace.jsx";
 import MethodologyWorkspace from "./components/workspace/MethodologyWorkspace.jsx";
 
@@ -52,9 +53,9 @@ export default function App() {
     typeof localStorage !== "undefined" && localStorage.getItem("rf_guide") === "1");
   const [events, setEvents] = useState([]);
 
-  // The real active target, or null. In simulated/preview mode we deliberately
-  // report null so methodology workspaces show "load a target" rather than
-  // pretending the sim's example.com is a live engagement.
+  // The real active target, or null. When the backend is offline we report
+  // null so methodology workspaces show "load a target" rather than pretending
+  // there's a live engagement.
   const liveTarget = view.live && view.target && view.target !== "—" ? view.target : null;
   const target = targetOverride || liveTarget;
 
@@ -82,6 +83,7 @@ export default function App() {
     if (route === "intake")
       return <Intake view={view} target={target} riskMode={riskMode} setRiskMode={setRiskMode} onSaved={onSaved} onEvent={onEvent} />;
     if (route === "scope") return <Scope view={view} onNav={setRoute} />;
+    if (route === "accounts") return <Accounts />;
     if (PHASE_PAGES[route])
       return <PhaseWorkspace route={route} view={view} target={target} guide={guide} onEvent={onEvent} />;
     if (METHODOLOGIES[route])

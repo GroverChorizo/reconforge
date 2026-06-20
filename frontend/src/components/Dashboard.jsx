@@ -193,12 +193,12 @@ export default function Dashboard({ view }) {
     <main className="ws">
       <div className="ws-head">
         <div className="ws-title">
-          <div className="ey">Operations · {view.live ? "Live" : "Preview"}</div>
+          <div className="ey">Operations · {view.live ? "Live" : "Offline"}</div>
           <h1>Mission Control</h1>
           <div className="sub">Everything in motion for the active engagement — surface, agents, jobs, and signal.</div>
         </div>
         <div className={`demo-pill ${view.live ? "live" : ""}`}>
-          {view.live ? <><CheckCircle2 size={11} /> Live telemetry</> : <>Simulated telemetry · preview</>}
+          {view.live ? <><CheckCircle2 size={11} /> Live telemetry</> : <>Backend offline · no telemetry</>}
         </div>
       </div>
 
