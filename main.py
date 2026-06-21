@@ -3103,6 +3103,8 @@ class ReconHandler(BaseHTTPRequestHandler):
             return self._api_jobs_create(session)
         if path == "/api/scope":
             return self._api_scope_save(session)
+        if path == "/api/history":
+            return self._api_history_add(session)
         if path == "/api/pipeline/run":
             return self._api_pipeline_run(session)
         if path == "/api/agent/run":
@@ -3717,6 +3719,23 @@ class ReconHandler(BaseHTTPRequestHandler):
         else:
             rows = db_rows("SELECT * FROM history ORDER BY created_at DESC LIMIT 200")
         self._ok(rows_to_list(rows))
+
+    def _api_history_add(self, session: Dict) -> None:
+        """Append a client-side workflow event (e.g. a command copied from the
+        Command Forge) to a target's persisted timeline, so the Session Log
+        records what the operator generated — not only what the pipeline ran."""
+        body   = self._body_json() or {}
+        domain = (body.get("domain") or body.get("target") or "").strip().lower()
+        text   = (body.get("text") or "").strip()
+        source = (body.get("source") or "forge").strip().lower()
+        if not domain or not _valid_target(domain):
+            return self._err("valid target required", 400)
+        if not text:
+            return self._err("text required", 400)
+        if source not in ("forge", "note"):
+            source = "forge"
+        add_history(domain, source, text[:500])
+        return self._ok({"domain": domain, "source": source})
 
     def _api_logs(self, qs: Dict) -> None:
         src_filter = qs.get("src", [None])[0]

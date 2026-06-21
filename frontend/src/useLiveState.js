@@ -90,12 +90,13 @@ function emptyView(connected = false) {
     monitors: [],
     tools: [],
     surface: [],
+    session: [],
     log: [],
   };
 }
 
 /* ── live merge (real /api/state → view) ─────────────────── */
-function mergeLive(v, s, agent, logs, scope, tgt) {
+function mergeLive(v, s, agent, logs, scope, tgt, session) {
   try {
     const st = s.stats || {};
     const stats = {
@@ -168,6 +169,7 @@ function mergeLive(v, s, agent, logs, scope, tgt) {
       jobs: { running, queued, completed },
       jobCounts: { running: st.running_count ?? running.length, queued: st.queued_count ?? queued.length, max: s.max_jobs || 5 },
       resources, monitors, tools,
+      session: Array.isArray(session) ? session.slice(0, 30) : (v.session || []),
       log: log.length ? log : v.log,
     };
   } catch (e) {
@@ -194,11 +196,12 @@ export function useLiveState() {
         const tgt = (running[0] && running[0].domain)
           || scope?.program?.workspace || scope?.program?.name
           || scope?.target || scope?.domain || null;
-        let agent = null, logs = null;
+        let agent = null, logs = null, session = null;
         try { agent = await api.agentState(tgt || ""); } catch (_) {}
         try { logs = await api.logs(); } catch (_) {}
+        try { session = tgt ? await api.history(tgt) : []; } catch (_) {}
         if (!alive) return;
-        setView((v) => mergeLive(v, s, agent, logs, scope, tgt));
+        setView((v) => mergeLive(v, s, agent, logs, scope, tgt, session));
         timer = setTimeout(pollLive, 3000);
       } catch (e) {
         // Backend unreachable: show an honest OFFLINE state (no synthetic

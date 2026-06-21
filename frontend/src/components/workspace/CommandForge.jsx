@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Terminal, Copy, Check } from "lucide-react";
 import { RiskBadge, fillCmd, copyText, statusMeta } from "./bits.jsx";
+import { api } from "../../api.js";
 
 function CmdRow({ tool, target, onEvent }) {
   const [copied, setCopied] = useState(false);
@@ -10,6 +11,9 @@ function CmdRow({ tool, target, onEvent }) {
   const copy = async () => {
     const ok = await copyText(filled);
     setCopied(ok);
+    // Persist to the target's Session Log so the hunt records what was
+    // generated, not just what the pipeline ran. Fire-and-forget.
+    if (ok && target) api.logCommand({ target, source: "forge", text: `${tool.name}: ${filled}` }).catch(() => {});
     onEvent && onEvent({ s: "forge", m: `command copied · ${tool.name}`, k: ok ? "ok" : "err" });
     setTimeout(() => setCopied(false), 1300);
   };
@@ -47,6 +51,10 @@ export default function CommandForge({ phase, target, output, onEvent }) {
   const copyAll = async () => {
     const all = runnable.map((t) => fillCmd(t.cmd, target)).join("\n");
     const ok = await copyText(all);
+    if (ok && target) api.logCommand({
+      target, source: "forge",
+      text: `${phase.label}: copied ${runnable.length} command${runnable.length === 1 ? "" : "s"} (${runnable.map((t) => t.name).join(", ")})`,
+    }).catch(() => {});
     onEvent && onEvent({
       s: "forge",
       m: `phase copied · ${phase.label} (${runnable.length} command${runnable.length === 1 ? "" : "s"})`,

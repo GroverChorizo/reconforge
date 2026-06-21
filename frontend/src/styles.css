@@ -350,3 +350,127 @@ body{background:var(--bg-main);color:var(--tx-1);font-family:var(--sans);font-si
 }
 @media (max-width:1180px){ .tiles{grid-template-columns:repeat(3,1fr);} .row2,.row3{grid-template-columns:1fr;} }
 @media (max-width:760px){ .grid{grid-template-columns:1fr;} .side{display:none;} .tiles{grid-template-columns:repeat(2,1fr);} .ctx{display:none;} .frow,.seg{grid-template-columns:1fr;} .forge-ctx .ingests{margin-left:0;} .pattern-grid{grid-template-columns:1fr;} }
+
+/* ════════════════════════════════════════════════════════════════
+   HOME BASE — operator HUD console  (2026-06-20 redesign)
+   The viewport reads as one instrument, not a field of floating
+   cards: a faint phosphor grid, corner brackets, a slow scan, and a
+   telemetry "bus" that replaces the six stat tiles. Boldness lives
+   in the frame + the bus; every panel stays quiet. Palette and
+   identity are unchanged — only framing, density, and motion.
+   Append-only: overrides earlier rules by source order.
+   ════════════════════════════════════════════════════════════════ */
+:root{
+  --r:3px; --r-lg:4px;                 /* de-square: tighter corners everywhere */
+  --hud:rgba(155,92,255,.028);         /* phosphor grid line (faint) */
+  --hud-bd:rgba(155,92,255,.34);       /* corner-bracket stroke */
+  --scan:rgba(140,150,170,.05);        /* scanline tint */
+  --glow-ok:0 0 8px rgba(57,255,136,.55);
+}
+
+/* phosphor grid + top vignette on the base surface (shows through panel gaps) */
+body{
+  background-color:var(--bg-main);
+  background-image:
+    linear-gradient(var(--hud) 1px,transparent 1px),
+    linear-gradient(90deg,var(--hud) 1px,transparent 1px),
+    radial-gradient(130% 90% at 50% -20%,rgba(155,92,255,.07),transparent 55%);
+  background-size:46px 46px,46px 46px,100% 100%;
+}
+
+/* enclosing console: four corner brackets + ambient scan sweep.
+   Both are pointer-events:none and sit below the command palette (z 50). */
+.rf-root::before{
+  content:"";position:fixed;inset:6px;pointer-events:none;z-index:8;
+  background-image:
+    linear-gradient(var(--hud-bd) 0 0),linear-gradient(var(--hud-bd) 0 0),
+    linear-gradient(var(--hud-bd) 0 0),linear-gradient(var(--hud-bd) 0 0),
+    linear-gradient(var(--hud-bd) 0 0),linear-gradient(var(--hud-bd) 0 0),
+    linear-gradient(var(--hud-bd) 0 0),linear-gradient(var(--hud-bd) 0 0);
+  background-repeat:no-repeat;
+  background-position:top left,top left,top right,top right,bottom left,bottom left,bottom right,bottom right;
+  background-size:20px 1px,1px 20px,20px 1px,1px 20px,20px 1px,1px 20px,20px 1px,1px 20px;
+}
+.rf-root::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:7;opacity:.6;
+  background:linear-gradient(180deg,transparent,var(--scan) 50%,transparent);
+  background-size:100% 8px;animation:scan 8s linear infinite;
+}
+@keyframes scan{0%{background-position:0 -110vh;}100%{background-position:0 110vh;}}
+
+/* power-on: staggered reveal of the console rows (runs once on load) */
+@keyframes boot{from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:none;}}
+.hdr{animation:boot .4s ease both;}
+.rail{animation:boot .4s ease .07s both;}
+.grid{animation:boot .45s ease .14s both;}
+.console{animation:boot .4s ease .2s both;}
+
+/* brand mark = a powered-on reactor */
+.brand::before{
+  content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);
+  box-shadow:var(--glow-ok);margin-right:10px;flex:none;
+  animation:reactor 2.4s ease-in-out infinite;
+}
+@keyframes reactor{0%,100%{opacity:1;}50%{opacity:.4;}}
+
+/* panel header → instrument readout: a leading run marker */
+.phead .pt::before{content:"\25B8";color:var(--pp);font-size:10px;margin-right:-3px;}
+/* modules sit ON the console with a hair more depth */
+.panel{box-shadow:0 1px 0 rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.018);}
+
+/* ── TELEMETRY BUS — signature: six live sensors as one readout ── */
+.tiles{
+  display:flex;align-items:stretch;gap:0;
+  background:var(--bg-panel);border:1px solid var(--bd-muted);border-radius:var(--r-lg);
+  overflow:hidden;position:relative;
+}
+.tiles::before{
+  content:"TELEMETRY";writing-mode:vertical-rl;transform:rotate(180deg);
+  font-family:var(--mono);font-size:8px;letter-spacing:.24em;color:var(--tx-4);
+  background:var(--bg-soft);border-right:1px solid var(--bd-soft);
+  display:flex;align-items:center;justify-content:center;padding:0 4px;flex:none;
+}
+.tile{
+  flex:1;min-width:0;background:none;border:none;border-right:1px solid var(--bd-soft);
+  border-radius:0;padding:11px 15px;
+}
+.tile:last-child{border-right:none;}
+.tile .num{font-size:23px;}
+.tile.accent::before{left:0;right:0;top:0;bottom:auto;width:auto;height:2px;}
+.tile.find::before{left:0;right:0;top:0;bottom:auto;width:auto;height:2px;}
+
+/* ── WAR-ROOM layout: primary ops column + peripheral signal rail ── */
+.cmd-grid{display:grid;grid-template-columns:1.7fr 1fr;gap:14px;align-items:start;}
+.ops-col,.signal-rail{display:flex;flex-direction:column;gap:14px;min-width:0;}
+
+@media (max-width:1180px){ .cmd-grid{grid-template-columns:1fr;} }
+@media (max-width:760px){
+  .tiles{flex-wrap:wrap;}
+  .tiles::before{display:none;}
+  .tile{flex:1 0 42%;border-bottom:1px solid var(--bd-soft);}
+}
+@media (prefers-reduced-motion: reduce){
+  .rf-root::after{animation:none;}
+  .hdr,.rail,.grid,.console{animation:none;}
+  .brand::before{animation:none;}
+}
+
+/* ── Session Log — per-target hunt timeline (page + dashboard peek) ── */
+.sl-filters{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px;}
+.slf{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--tx-3);background:var(--bg-panel);border:1px solid var(--bd-muted);border-radius:var(--r);padding:5px 10px;cursor:pointer;}
+.slf:hover{border-color:var(--pp);color:var(--tx-1);}
+.slf.on{border-color:var(--pp);background:var(--pp-soft);color:var(--pp-hi);}
+.slf i{font-style:normal;font-size:9px;color:var(--tx-4);}
+.slf.on i{color:var(--pp-hi);}
+.sl-day{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.14em;color:var(--tx-4);padding:12px 0 6px;border-bottom:1px solid var(--bd-soft);margin-bottom:4px;}
+.sl-day:first-child{padding-top:0;}
+.slrow{display:flex;align-items:baseline;gap:11px;padding:7px 0;border-bottom:1px solid var(--bd-soft);font-family:var(--mono);font-size:11.5px;line-height:1.5;}
+.slrow:last-child{border-bottom:none;}
+.sltime{flex:none;font-size:10px;color:var(--tx-4);}
+.slsrc{flex:none;min-width:60px;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--tx-3);}
+.slsrc.pp{color:var(--pp-hi);} .slsrc.ok{color:var(--ok);} .slsrc.warn{color:var(--warn);}
+.sltext{flex:1;color:var(--tx-2);word-break:break-word;}
+.peeklink{background:none;border:none;color:var(--tx-3);font-family:var(--mono);font-size:10px;cursor:pointer;}
+.peeklink:hover{color:var(--pp-hi);}
+.hi{color:var(--pp-hi);}
+.lk{color:var(--pp-hi);cursor:pointer;}

@@ -1,7 +1,7 @@
 import React from "react";
 import {
   GitBranch, Activity, Cpu, Layers, Bell, Terminal, Globe, FileText, Zap,
-  AlertTriangle, CheckCircle2,
+  AlertTriangle, CheckCircle2, ScrollText,
 } from "lucide-react";
 import Sparkline from "./Sparkline.jsx";
 
@@ -188,7 +188,30 @@ function ToolHealthPanel({ view }) {
   );
 }
 
-export default function Dashboard({ view }) {
+/* Compact recent-activity peek on Mission Control. Reads view.session (the
+   per-target history fetched in useLiveState) and links to the full page. */
+function SessionLogPeek({ view, onNav }) {
+  const rows = (view.session || []).slice(0, 6);
+  return (
+    <div className="panel">
+      <div className="phead">
+        <div className="pt"><ScrollText /> Session Log</div>
+        <button className="peeklink" onClick={() => onNav && onNav("session")}>open ↗</button>
+      </div>
+      <div className="pbody">
+        {rows.length === 0 && <div className="empty">No session activity yet. Copy a command to start the record.</div>}
+        {rows.map((r, i) => (
+          <div className="slrow" key={r.id || i}>
+            <span className="slsrc">{(r.source || "evt").slice(0, 8)}</span>
+            <span className="sltext">{r.text}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function Dashboard({ view, onNav }) {
   return (
     <main className="ws">
       <div className="ws-head">
@@ -217,15 +240,17 @@ export default function Dashboard({ view }) {
       <Tiles view={view} />
       <AgentPipeline view={view} />
 
-      <div className="row2" style={{ marginBottom: 14 }}>
-        <JobQueue view={view} />
-        <ResourcesPanel view={view} />
-      </div>
-
-      <div className="row3">
-        <SurfacePanel view={view} />
-        <MonitorsPanel view={view} />
-        <ToolHealthPanel view={view} />
+      <div className="cmd-grid">
+        <div className="ops-col">
+          <JobQueue view={view} />
+          <SurfacePanel view={view} />
+        </div>
+        <div className="signal-rail">
+          <SessionLogPeek view={view} onNav={onNav} />
+          <ResourcesPanel view={view} />
+          <MonitorsPanel view={view} />
+          <ToolHealthPanel view={view} />
+        </div>
       </div>
     </main>
   );

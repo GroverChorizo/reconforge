@@ -11,6 +11,7 @@ import CommandPalette from "./components/CommandPalette.jsx";
 import Intake from "./components/workspace/Intake.jsx";
 import Scope from "./components/workspace/Scope.jsx";
 import Accounts from "./components/workspace/Accounts.jsx";
+import SessionLog from "./components/workspace/SessionLog.jsx";
 import PhaseWorkspace from "./components/workspace/PhaseWorkspace.jsx";
 import MethodologyWorkspace from "./components/workspace/MethodologyWorkspace.jsx";
 
@@ -79,11 +80,12 @@ export default function App() {
   const onSaved = useCallback((t) => { setTargetOverride(t); setRoute("scope"); }, []);
 
   function renderRoute() {
-    if (route === "dashboard") return <Dashboard view={view} />;
+    if (route === "dashboard") return <Dashboard view={view} onNav={setRoute} />;
     if (route === "intake")
       return <Intake view={view} target={target} riskMode={riskMode} setRiskMode={setRiskMode} onSaved={onSaved} onEvent={onEvent} />;
     if (route === "scope") return <Scope view={view} onNav={setRoute} />;
     if (route === "accounts") return <Accounts />;
+    if (route === "session") return <SessionLog target={target} onNav={setRoute} />;
     if (PHASE_PAGES[route])
       return <PhaseWorkspace route={route} view={view} target={target} guide={guide} onEvent={onEvent} />;
     if (METHODOLOGIES[route])

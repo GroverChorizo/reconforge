@@ -44,6 +44,11 @@ export const api = {
   // Persist + enforce declared scope (Target Intake). After this resolves,
   // scope_guard gates every dispatch against these exact in/out-of-scope rules.
   saveScope: (body) => postJSON("/api/scope", body),
+  // Per-target workflow timeline (Session Log). history() reads the persisted
+  // events; logCommand() appends one (e.g. a command copied from the Forge).
+  history: (target) =>
+    getJSON("/api/history" + (target ? `?domain=${encodeURIComponent(target)}` : "")),
+  logCommand: (body) => postJSON("/api/history", body),
   // Login/user accounts (admin only — backend returns 403 otherwise).
   users: () => getJSON("/api/users"),
   createUser: (body) => postJSON("/api/users", body),
