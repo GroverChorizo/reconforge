@@ -20,7 +20,7 @@ import urllib.parse, urllib.request, urllib.error
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -4927,27 +4927,53 @@ def main() -> None:
     # Start background workers
     start_workers()
 
-    # HTTP server
-    server = HTTPServer((args.host, args.port), ReconHandler)
+    # HTTP server. ThreadingHTTPServer (one thread per request) so a slow or
+    # long-lived request — streaming job logs, an agent run — can't block the
+    # SPA's 3-second /api/state poll. The single-threaded HTTPServer serialized
+    # every request, which made the whole UI feel frozen while a hunt ran. Each
+    # request thread gets its own SQLite connection via get_db()'s threading.local.
+    server = ThreadingHTTPServer((args.host, args.port), ReconHandler)
     if ctx:
         server.socket = ctx.wrap_socket(server.socket, server_side=True)
     proto = "https" if ctx else "http"
     emit(f"Listening on {proto}://{args.host}:{args.port}", "INFO", "system")
     display_host = "127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host
     print(f"\n  {APP_NAME} v{VERSION}  —  {proto}://{display_host}:{args.port}\n")
+    print("  Press Ctrl+C to stop.\n")
 
-    def _sig(*_):
-        emit("Shutting down…", "INFO", "system")
-        _shutdown.set()
-        server.shutdown()
+    # Serve on a background thread so the MAIN thread stays free to wait for a
+    # shutdown signal and then call server.shutdown() itself. Calling
+    # server.shutdown() from inside the signal handler deadlocks: the handler
+    # runs on the main thread, which is exactly the thread blocked in
+    # serve_forever(), and shutdown() blocks waiting for that loop to notice the
+    # request — a wait that can never complete. That was the "Shutting down…"
+    # freeze. shutdown() must be called from a DIFFERENT thread than the one
+    # running serve_forever().
+    srv_thread = threading.Thread(target=server.serve_forever,
+                                  name="http-server", daemon=True)
+    srv_thread.start()
 
-    signal.signal(signal.SIGINT,  _sig)
-    signal.signal(signal.SIGTERM, _sig)
+    # Signal handlers only flip the event; the heavy lifting happens on the main
+    # thread once wait() returns.
+    signal.signal(signal.SIGINT,  lambda *_: _shutdown.set())
+    signal.signal(signal.SIGTERM, lambda *_: _shutdown.set())
+    if hasattr(signal, "SIGBREAK"):   # Windows Ctrl+Break
+        signal.signal(signal.SIGBREAK, lambda *_: _shutdown.set())
 
     try:
-        server.serve_forever()
+        # Poll the event rather than blocking forever so Ctrl+C is delivered
+        # promptly on Windows, where a bare Event.wait() can otherwise sit on
+        # the signal until the next I/O.
+        while not _shutdown.wait(timeout=0.5):
+            pass
     except KeyboardInterrupt:
-        _sig()
+        _shutdown.set()
+
+    emit("Shutting down…", "INFO", "system")
+    server.shutdown()        # safe here — different thread than serve_forever
+    server.server_close()
+    srv_thread.join(timeout=5)
+    print("  Stopped.\n")
 
 if __name__ == "__main__":
     main()
