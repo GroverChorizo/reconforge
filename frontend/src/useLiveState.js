@@ -70,10 +70,13 @@ function railFrom(doneCount) {
    Honest "nothing yet" state. `connected` is false until /api/state
    answers; the UI renders this as OFFLINE with em-dashes rather than
    inventing a fake engagement. No synthetic data — ever. */
-function emptyView(connected = false) {
+function emptyView(connected = false, authed = null) {
   return {
     live: false,
     connected,
+    // null = unknown (still connecting), true = signed in, false = needs login.
+    authed,
+    user: null,
     target: null,
     program: "—",
     scopeValidated: false,
@@ -161,7 +164,8 @@ function mergeLive(v, s, agent, logs, scope, tgt, session) {
       t: fmtTs(l), s: l.src || "", m: l.msg || l.message || "", k: lvlClass(l.level),
     }));
     return {
-      ...v, live: true, connected: true, target: tgt || "—", program, scopeValidated, mode,
+      ...v, live: true, connected: true, authed: true, user: s.session || v.user || null,
+      target: tgt || "—", program, scopeValidated, mode,
       phaseLabel: running[0]?.phase ? `${running[0].phase}` : "idle",
       rail: railFrom(scopeValidated ? (running.length ? 3 : 2) : 1),
       stats, deltas: { hosts: 0, urls: 0, js: 0, params: 0, vulns: 0 },
@@ -173,7 +177,7 @@ function mergeLive(v, s, agent, logs, scope, tgt, session) {
       log: log.length ? log : v.log,
     };
   } catch (e) {
-    return { ...v, live: true, connected: true };
+    return { ...v, live: true, connected: true, authed: true };
   }
 }
 
@@ -204,11 +208,20 @@ export function useLiveState() {
         setView((v) => mergeLive(v, s, agent, logs, scope, tgt, session));
         timer = setTimeout(pollLive, 3000);
       } catch (e) {
-        // Backend unreachable: show an honest OFFLINE state (no synthetic
-        // data) and keep retrying so the UI recovers when it comes back.
         if (!alive) return;
-        setView(() => emptyView(false));
-        timer = setTimeout(pollLive, 5000);
+        if (e && e.status === 401) {
+          // Backend is up but we have no valid session — show the login screen
+          // (connected=true so it's clearly "sign in", not "offline"). Keep
+          // polling so a login in another tab is picked up too.
+          setView(() => emptyView(true, false));
+          timer = setTimeout(pollLive, 3000);
+        } else {
+          // Backend unreachable: honest OFFLINE state (no synthetic data),
+          // preserving any known auth state so a transient blip doesn't bounce
+          // the operator to the login screen. Keep retrying.
+          setView((v) => emptyView(false, v.authed));
+          timer = setTimeout(pollLive, 5000);
+        }
       }
     }
 

@@ -474,3 +474,17 @@ body{
 .peeklink:hover{color:var(--pp-hi);}
 .hi{color:var(--pp-hi);}
 .lk{color:var(--pp-hi);cursor:pointer;}
+
+/* ── login screen ─────────────────────────────────────────── */
+.login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:
+  radial-gradient(1200px 600px at 50% -10%,var(--pp-soft),transparent 70%),var(--bg-main);padding:24px;}
+.login-card{width:100%;max-width:340px;background:var(--bg-panel);border:1px solid var(--bd-muted);
+  border-radius:var(--r-lg);padding:26px 24px;display:flex;flex-direction:column;gap:14px;
+  box-shadow:0 20px 60px rgba(0,0,0,.5);}
+.login-brand{border:none;height:auto;padding:0;font-size:20px;justify-content:center;}
+.login-sub{display:flex;align-items:center;justify-content:center;gap:6px;font-family:var(--mono);
+  font-size:11px;color:var(--tx-3);text-transform:uppercase;letter-spacing:.12em;margin-bottom:4px;}
+.login-btn{justify-content:center;margin-top:4px;padding:9px 12px;}
+.login-err{font-family:var(--mono);font-size:11px;color:var(--err);background:var(--err-soft);
+  border:1px solid var(--err);border-radius:var(--r);padding:7px 10px;}
+.login-foot{font-size:10.5px;color:var(--tx-4);text-align:center;line-height:1.5;margin-top:2px;}

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useLiveState } from "./useLiveState.js";
 import { SIDEBAR, PHASE_PAGES } from "./constants.js";
 import { METHODOLOGIES } from "./data/methodologies.js";
+import Login from "./components/Login.jsx";
 import Header from "./components/Header.jsx";
 import KillChainRail from "./components/KillChainRail.jsx";
 import Sidebar from "./components/Sidebar.jsx";
@@ -78,6 +79,10 @@ export default function App() {
   }, []);
 
   const onSaved = useCallback((t) => { setTargetOverride(t); setRoute("scope"); }, []);
+
+  // Backend is reachable but we have no session: show sign-in. (All hooks above
+  // run unconditionally so this early return is safe per the rules of hooks.)
+  if (view.authed === false) return <Login />;
 
   function renderRoute() {
     if (route === "dashboard") return <Dashboard view={view} onNav={setRoute} />;

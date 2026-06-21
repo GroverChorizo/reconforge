@@ -6,7 +6,13 @@ async function getJSON(url) {
     credentials: "include",
     headers: { Accept: "application/json" },
   });
-  if (!r.ok) throw new Error(`${url} -> ${r.status}`);
+  if (!r.ok) {
+    // Attach the HTTP status so callers can distinguish 401 (needs login)
+    // from a network/backend-down failure.
+    const e = new Error(`${url} -> ${r.status}`);
+    e.status = r.status;
+    throw e;
+  }
   const j = await r.json();
   return j && j.data !== undefined ? j.data : j;
 }
@@ -24,7 +30,9 @@ async function sendJSON(method, url, body) {
   const r = await fetch(url, init);
   const j = await r.json().catch(() => ({}));
   if (!r.ok || j.success === false) {
-    throw new Error(j.message || `${url} -> ${r.status}`);
+    const e = new Error(j.message || `${url} -> ${r.status}`);
+    e.status = r.status;
+    throw e;
   }
   return j && j.data !== undefined ? j.data : j;
 }
@@ -32,6 +40,9 @@ async function sendJSON(method, url, body) {
 const postJSON = (url, body) => sendJSON("POST", url, body || {});
 
 export const api = {
+  // Auth. login() sets the session cookie on success; logout() clears it.
+  login: (username, password) => postJSON("/api/login", { username, password }),
+  logout: () => postJSON("/api/logout", {}),
   state: () => getJSON("/api/state"),
   agentState: (target) =>
     getJSON("/api/agent/state" + (target ? `?target=${encodeURIComponent(target)}` : "")),
