@@ -488,3 +488,44 @@ body{
 .login-err{font-family:var(--mono);font-size:11px;color:var(--err);background:var(--err-soft);
   border:1px solid var(--err);border-radius:var(--r);padding:7px 10px;}
 .login-foot{font-size:10.5px;color:var(--tx-4);text-align:center;line-height:1.5;margin-top:2px;}
+
+/* ── phase execution (Command Forge run) ──────────────────── */
+.btn.danger{background:var(--err);border-color:var(--err);color:#0d0e11;font-weight:700;}
+.btn.danger:hover{background:#ff5c77;border-color:#ff5c77;color:#0d0e11;}
+.run-btn{padding:5px 11px;}
+.forge-meta{display:flex;align-items:center;gap:10px;}
+.run-err{margin:0 14px 12px;display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11.5px;
+  color:var(--err);background:var(--err-soft);border:1px solid var(--err);border-radius:var(--r);padding:8px 10px;}
+.run-logs{margin:0 14px 12px;border:1px solid var(--bd-soft);border-radius:var(--r);background:var(--bg-main);overflow:hidden;}
+.run-logs-head{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;color:var(--tx-3);
+  text-transform:uppercase;letter-spacing:.1em;padding:7px 10px;border-bottom:1px solid var(--bd-soft);background:var(--bg-elev);}
+.run-logs pre{margin:0;padding:10px;max-height:300px;overflow:auto;font-family:var(--mono);font-size:11.5px;
+  line-height:1.5;color:var(--tx-2);white-space:pre-wrap;word-break:break-word;}
+.dotpulse{width:7px;height:7px;border-radius:50%;background:var(--pp);animation:pulse 1.4s ease-in-out infinite;}
+
+/* ── run bar (active dated run + new run) ──────────────────── */
+.run-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;
+  background:var(--bg-panel);border:1px solid var(--bd-muted);border-radius:var(--r);padding:9px 13px;}
+.run-bar-l{font-family:var(--mono);font-size:11px;color:var(--tx-3);display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.run-bar-l b{color:var(--tx-1);}
+.run-dir{color:var(--tx-4);font-size:10.5px;}
+.btn.ghost.on{border-color:var(--pp);color:var(--pp-hi);background:var(--pp-soft);}
+
+/* ── agent run control ────────────────────────────────────── */
+.agent-head-r{display:flex;align-items:center;gap:12px;}
+.agent-msg{margin:0 0 10px;font-family:var(--mono);font-size:11px;border-radius:var(--r);padding:7px 10px;
+  border:1px solid var(--bd-muted);color:var(--tx-2);}
+.agent-msg.ok{color:var(--ok);border-color:var(--ok);background:var(--ok-soft);}
+.agent-msg.err{color:var(--err);border-color:var(--err);background:var(--err-soft);}
+
+/* ── scan runs browser ────────────────────────────────────── */
+.runs{display:flex;flex-direction:column;gap:12px;}
+.panel.run.active{border-color:var(--pp);}
+.run-active-pill{font-family:var(--mono);font-size:9px;color:var(--pp-hi);border:1px solid var(--pp);
+  background:var(--pp-soft);border-radius:99px;padding:1px 7px;margin-left:6px;letter-spacing:.08em;}
+.run-path{font-family:var(--mono);font-size:10.5px;color:var(--tx-4);padding:0 14px 8px;word-break:break-all;}
+.run-phase{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;
+  border-bottom:1px solid var(--bd-soft);font-family:var(--mono);font-size:11.5px;}
+.run-phase:last-child{border-bottom:none;}
+.rp-name{display:flex;align-items:center;gap:7px;color:var(--tx-1);}
+.rp-meta{color:var(--tx-3);font-size:10.5px;}

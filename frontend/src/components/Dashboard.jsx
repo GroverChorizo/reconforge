@@ -1,9 +1,10 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   GitBranch, Activity, Cpu, Layers, Bell, Terminal, Globe, FileText, Zap,
-  AlertTriangle, CheckCircle2, ScrollText,
+  AlertTriangle, CheckCircle2, ScrollText, Play,
 } from "lucide-react";
 import Sparkline from "./Sparkline.jsx";
+import { api } from "../api.js";
 
 const TILE_DEFS = [
   ["Live Hosts", Globe, "hosts", "accent"],
@@ -42,12 +43,38 @@ function Tiles({ view }) {
 function AgentPipeline({ view }) {
   const { agents, agentMeta } = view;
   const cur = agents[agentMeta.stage] || agents[0] || { label: "—", desc: "" };
+  const running = agents.some((a) => a.state === "running");
+  const target = view.target && view.target !== "—" ? view.target : null;
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const run = async () => {
+    if (!target || busy || running) return;
+    setBusy(true); setMsg(null);
+    try {
+      await api.agentRun(target);
+      setMsg({ k: "ok", t: `agent chain launched for ${target}` });
+    } catch (e) {
+      // 403 out-of-scope, 409 already running, or backend/LLM not configured.
+      setMsg({ k: "err", t: String(e.message || e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="panel" style={{ marginBottom: 14 }}>
       <div className="phead">
         <div className="pt"><GitBranch /> Agent Pipeline</div>
-        <div className="pmeta">backend: {agentMeta.backend} · cap ${Number(agentMeta.costCap).toFixed(3)} / run</div>
+        <div className="agent-head-r">
+          <span className="pmeta">backend: {agentMeta.backend} · cap ${Number(agentMeta.costCap).toFixed(3)} / run</span>
+          <button className="btn primary run-btn" onClick={run} disabled={!target || busy || running}
+                  title={target ? "Run the six-agent chain on the active target" : "Load a target first"}>
+            <Play size={12} /> {running ? "running…" : busy ? "launching…" : "Run agents"}
+          </button>
+        </div>
       </div>
+      {msg && <div className={`agent-msg ${msg.k}`}>{msg.t}</div>}
       <div className="flow">
         {agents.map((a) => {
           const Icon = a.icon;

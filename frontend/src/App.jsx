@@ -13,6 +13,8 @@ import Intake from "./components/workspace/Intake.jsx";
 import Scope from "./components/workspace/Scope.jsx";
 import Accounts from "./components/workspace/Accounts.jsx";
 import SessionLog from "./components/workspace/SessionLog.jsx";
+import Commands from "./components/workspace/Commands.jsx";
+import Runs from "./components/workspace/Runs.jsx";
 import PhaseWorkspace from "./components/workspace/PhaseWorkspace.jsx";
 import MethodologyWorkspace from "./components/workspace/MethodologyWorkspace.jsx";
 
@@ -91,6 +93,8 @@ export default function App() {
     if (route === "scope") return <Scope view={view} onNav={setRoute} />;
     if (route === "accounts") return <Accounts />;
     if (route === "session") return <SessionLog target={target} onNav={setRoute} />;
+    if (route === "commands") return <Commands view={view} target={target} onEvent={onEvent} />;
+    if (route === "runs") return <Runs view={view} target={target} />;
     if (PHASE_PAGES[route])
       return <PhaseWorkspace route={route} view={view} target={target} guide={guide} onEvent={onEvent} />;
     if (METHODOLOGIES[route])

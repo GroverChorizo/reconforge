@@ -1,7 +1,12 @@
-import React, { useState } from "react";
-import { Terminal, Copy, Check } from "lucide-react";
-import { RiskBadge, fillCmd, copyText, statusMeta } from "./bits.jsx";
+import React, { useState, useEffect, useRef } from "react";
+import { Terminal, Copy, Check, Play, AlertTriangle } from "lucide-react";
+import { RiskBadge, fillCmd, copyText, statusMeta, isDone } from "./bits.jsx";
 import { api } from "../../api.js";
+
+const isTerminal = (s) => {
+  const v = String(s || "").toLowerCase();
+  return ["completed", "complete", "done", "ok", "error", "failed", "fail", "cancelled"].includes(v);
+};
 
 function CmdRow({ tool, target, onEvent }) {
   const [copied, setCopied] = useState(false);
@@ -40,13 +45,72 @@ function CmdRow({ tool, target, onEvent }) {
   );
 }
 
-/* The centerpiece. One Command Forge per methodology phase: header carries the
-   phase risk + live status; body lists each tool's copy-pasteable command for
-   the active target. Display-only — nothing executes from here. */
-export default function CommandForge({ phase, target, output, onEvent }) {
+function logText(l) {
+  if (typeof l === "string") return l;
+  if (!l) return "";
+  const ts = l.ts || l.time || "";
+  return `${ts ? ts + " " : ""}${l.msg || l.message || l.line || JSON.stringify(l)}`;
+}
+
+/* One Command Forge per methodology phase. The body lists each tool's
+   copy-pasteable command (templates — secrets are never resolved client-side).
+   "Run phase" executes the real phase script on the server (scope-gated by the
+   backend before anything spawns) and streams its live output here; aggressive
+   phases confirm first. Copy still works for running in your own terminal. */
+export default function CommandForge({ phase, target, output, fresh, onEvent, onLaunched }) {
   const sm = statusMeta(phase.status);
   const tools = phase.tool_meta || [];
   const runnable = tools.filter((t) => t.cmd);
+  const aggressive = String(phase.risk || "").toLowerCase() === "aggressive";
+
+  const [running, setRunning] = useState(false);
+  const [logs, setLogs] = useState([]);
+  const [liveStatus, setLiveStatus] = useState(null);
+  const [runErr, setRunErr] = useState(null);
+  const aliveRef = useRef(true);
+  const pollRef = useRef(null);
+
+  const poll = async () => {
+    try {
+      const d = await api.pipelineLogs(target, phase.id);
+      if (!aliveRef.current) return;
+      setLogs(d.logs || []);
+      setLiveStatus(d.status || null);
+      if (isTerminal(d.status)) {
+        setRunning(false);
+        onEvent && onEvent({ s: "run", m: `phase ${phase.label} · ${String(d.status).toLowerCase()}`, k: isDone(d.status) ? "ok" : "err" });
+        onLaunched && onLaunched();
+        return;
+      }
+    } catch (_) { /* transient — keep polling */ }
+    if (aliveRef.current) pollRef.current = setTimeout(poll, 1600);
+  };
+
+  // Re-attach to an already-running phase (launched before this mounted).
+  useEffect(() => {
+    aliveRef.current = true;
+    if (String(phase.status || "").toLowerCase() === "running") { setRunning(true); poll(); }
+    return () => { aliveRef.current = false; if (pollRef.current) clearTimeout(pollRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase.id, target]);
+
+  const run = async () => {
+    if (!target || running) return;
+    if (aggressive && !window.confirm(
+      `"${phase.label}" sends live / aggressive payloads to ${target}. Run it on the server now?`)) return;
+    setRunErr(null); setLogs([]); setLiveStatus("running"); setRunning(true);
+    try {
+      await api.pipelineRun(target, phase.id, !!fresh);
+      onEvent && onEvent({ s: "run", m: `phase launched · ${phase.label}${fresh ? " (fresh run)" : ""}`, k: "ok" });
+      onLaunched && onLaunched();
+      poll();
+    } catch (e) {
+      setRunning(false);
+      const m = String(e.message || e);
+      setRunErr(m);  // e.g. "out of scope: …" (403) from Scope Guard
+      onEvent && onEvent({ s: "run", m: `launch refused · ${m}`, k: "err" });
+    }
+  };
 
   const copyAll = async () => {
     const all = runnable.map((t) => fillCmd(t.cmd, target)).join("\n");
@@ -62,13 +126,20 @@ export default function CommandForge({ phase, target, output, onEvent }) {
     });
   };
 
+  const shown = running ? { label: "running", cls: "proc" } : (liveStatus ? statusMeta(liveStatus) : sm);
+
   return (
     <div className="panel forge">
       <div className="phead">
         <div className="pt"><Terminal /> {phase.label} <span className="pnum">{phase.num}</span></div>
         <div className="forge-meta">
           <RiskBadge risk={phase.risk} />
-          <span className={`fstat ${sm.cls}`}>{sm.label}</span>
+          <span className={`fstat ${shown.cls}`}>{shown.label}</span>
+          <button className={`btn ${aggressive ? "danger" : "primary"} run-btn`}
+                  onClick={run} disabled={!target || running}
+                  title={target ? "Run this phase on the server" : "Load a target first"}>
+            <Play size={12} /> {running ? "running…" : "Run phase"}
+          </button>
         </div>
       </div>
       <div className="forge-ctx">
@@ -80,9 +151,18 @@ export default function CommandForge({ phase, target, output, onEvent }) {
         {tools.length === 0 && <div className="empty">No tools mapped to this phase.</div>}
         {tools.map((t) => <CmdRow key={t.key} tool={t} target={target} onEvent={onEvent} />)}
       </div>
+
+      {runErr && <div className="run-err"><AlertTriangle size={13} /> {runErr}</div>}
+      {(running || logs.length > 0) && (
+        <div className="run-logs">
+          <div className="run-logs-head">live output{running && <span className="dotpulse" />}</div>
+          <pre>{logs.length ? logs.slice(-300).map(logText).join("\n") : "waiting for output…"}</pre>
+        </div>
+      )}
+
       {runnable.length > 0 && (
         <div className="forge-foot">
-          <span className="fhint">Copy-only — commands run in your terminal. Nothing executes from here.</span>
+          <span className="fhint">Run executes the phase on the server, scope-gated. Or copy to run in your own terminal.</span>
           <button className="btn ghost" onClick={copyAll}><Copy size={12} /> Copy all</button>
         </div>
       )}

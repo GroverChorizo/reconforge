@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Info, AlertTriangle, Crosshair, GitBranch, ShieldCheck } from "lucide-react";
+import { RefreshCw, Info, AlertTriangle, Crosshair, GitBranch, ShieldCheck, FolderPlus } from "lucide-react";
 import { api } from "../../api.js";
 import { PHASE_PAGES } from "../../constants.js";
 import { VULN_PLAYBOOKS } from "../../data/vulnPlaybooks.js";
@@ -19,17 +19,20 @@ export default function PhaseWorkspace({ route, view, target, guide, onEvent }) 
   const cfg = PHASE_PAGES[route];
   const pb = VULN_PLAYBOOKS[route];
   const [phases, setPhases] = useState(null);
+  const [runMeta, setRunMeta] = useState({});
+  const [freshNext, setFreshNext] = useState(false);
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
-    if (!target) { setPhases(null); setErr(null); return; }
+    if (!target) { setPhases(null); setErr(null); setRunMeta({}); return; }
     setLoading(true);
     setErr(null);
     try {
       const data = await api.pipeline(target);
       const byId = Object.fromEntries((data.phases || []).map((p) => [p.id, p]));
       setPhases(cfg.phases.map((id) => byId[id]).filter(Boolean));
+      setRunMeta({ datestamp: data.datestamp, run_dir: data.run_dir });
     } catch (e) {
       setErr(String(e.message || e));
     } finally {
@@ -68,7 +71,9 @@ export default function PhaseWorkspace({ route, view, target, guide, onEvent }) 
         <Checklist phases={phases} />
         <div className="forge-stack">
           {phases.map((p) => (
-            <CommandForge key={p.id} phase={p} target={target} output={output} onEvent={onEvent} />
+            <CommandForge key={p.id} phase={p} target={target} output={output}
+              fresh={freshNext} onEvent={onEvent}
+              onLaunched={() => { setFreshNext(false); load(); }} />
           ))}
         </div>
       </>
@@ -90,12 +95,25 @@ export default function PhaseWorkspace({ route, view, target, guide, onEvent }) 
 
       <TargetStrip view={view} target={target} />
 
+      {target && (
+        <div className="run-bar">
+          <span className="run-bar-l">
+            active run · <b>{runMeta.datestamp || "— starts on first Run"}</b>
+            {runMeta.run_dir && <span className="run-dir">{runMeta.run_dir}</span>}
+          </span>
+          <button className={`btn ghost ${freshNext ? "on" : ""}`} onClick={() => setFreshNext((v) => !v)}
+                  title="Start the next Run in a new dated folder so it doesn't merge with the current run">
+            <FolderPlus size={12} /> {freshNext ? "new run armed" : "new run"}
+          </button>
+        </div>
+      )}
+
       {aggressive && (
         <div className="risknote">
           <AlertTriangle size={14} />
           <span>
-            Active workflow — these tools send live payloads to the target. Copy-only; nothing
-            auto-runs from here.
+            Active workflow — these tools send live payloads to the target. Running a phase here
+            executes it on the server; aggressive phases confirm before they launch.
           </span>
         </div>
       )}

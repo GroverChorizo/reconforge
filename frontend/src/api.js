@@ -52,6 +52,25 @@ export const api = {
   // (name + cmd template, no resolved secrets) used by the Command Forge.
   pipeline: (target) =>
     getJSON("/api/pipeline" + (target ? `?target=${encodeURIComponent(target)}` : "")),
+  // Execute a single kill-chain phase for a target (scope-gated server-side),
+  // and read its live logs. fresh=true starts a new dated run dir.
+  pipelineRun: (target, phase, fresh = false) =>
+    postJSON("/api/pipeline/run", { target, phase, fresh }),
+  pipelineLogs: (target, phase) =>
+    getJSON(`/api/pipeline/logs?target=${encodeURIComponent(target)}&phase=${encodeURIComponent(phase)}`),
+  // Six-agent LLM chain (Scope Guard → … → Reporter).
+  agentRun: (target, mode = "passive_recon") =>
+    postJSON("/api/agent/run", { target, mode }),
+  agentLogs: (target) =>
+    getJSON("/api/agent/logs" + (target ? `?target=${encodeURIComponent(target)}` : "")),
+  // Dated scan runs on disk: out/<target>/<datestamp>/<phase>/.
+  runs: (target) =>
+    getJSON("/api/runs" + (target ? `?target=${encodeURIComponent(target)}` : "")),
+  // Saved command library (per program/target).
+  commands: (target) =>
+    getJSON("/api/commands" + (target ? `?target=${encodeURIComponent(target)}` : "")),
+  saveCommand: (body) => postJSON("/api/commands", body),
+  deleteCommand: (id) => sendJSON("DELETE", `/api/commands/${id}`),
   // Persist + enforce declared scope (Target Intake). After this resolves,
   // scope_guard gates every dispatch against these exact in/out-of-scope rules.
   saveScope: (body) => postJSON("/api/scope", body),

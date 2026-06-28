@@ -1,6 +1,7 @@
 import {
   Gauge, Target, Shield, Radar, Crosshair, Globe, FileText, Layers, Eye,
   GitBranch, Zap, Database, AlertTriangle, Clock, Activity, Bell, Cpu, Command, Bot, Users, ScrollText,
+  Terminal, FolderOpen,
 } from "lucide-react";
 
 // Methodology-first navigation. Operations/Admin groups preserve existing tabs.
@@ -13,7 +14,7 @@ export const SIDEBAR = [
   { g: "Methodology", items: [["ai-api-fuzzing", "AI API Fuzzing", Bot]] },
   { g: "Evidence", items: [["findings", "Findings", AlertTriangle], ["timeline", "Timeline", Clock]] },
   { g: "Report", items: [["export", "Export", FileText]] },
-  { g: "Operations", items: [["jobs", "Jobs", Activity], ["session", "Session Log", ScrollText], ["monitors", "Monitors", Bell], ["resources", "Resources", Cpu]] },
+  { g: "Operations", items: [["jobs", "Jobs", Activity], ["runs", "Scan Runs", FolderOpen], ["commands", "Command Library", Terminal], ["session", "Session Log", ScrollText], ["monitors", "Monitors", Bell], ["resources", "Resources", Cpu]] },
   { g: "Admin", items: [["accounts", "Accounts", Users]] },
 ];
 
@@ -127,6 +128,8 @@ export const PALETTE_ACTIONS = [
   ["Generate SQLi commands", "cmd", Database, "sqli"],
   ["Open AI API Fuzzing methodology", "method", Bot, "ai-api-fuzzing"],
   ["Open Session Log", "ops", ScrollText, "session"],
+  ["Open Command Library", "ops", Terminal, "commands"],
+  ["Browse Scan Runs", "ops", FolderOpen, "runs"],
   ["Manage accounts", "admin", Users, "accounts"],
   ["Open Findings board", "evidence", AlertTriangle, "findings"],
   ["Open Asset Map", "map", Layers, "surface"],
