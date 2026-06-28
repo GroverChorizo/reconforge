@@ -75,6 +75,7 @@ class TestDiscovery:
             "005_programs",
             "006_evidence_modes_taxonomy",
             "007_recon_assets",
+            "008_saved_commands",
         ]
 
     def test_runner_module_excluded(self):
@@ -96,12 +97,13 @@ class TestFreshDB:
             "005_programs",
             "006_evidence_modes_taxonomy",
             "007_recon_assets",
+            "008_saved_commands",
         ]
 
     def test_run_pending_applies_all_four(self, fresh_db):
         conn, _ = fresh_db
         applied = R.run_pending(conn)
-        assert len(applied) == 7
+        assert len(applied) == 8
 
     def test_baseline_tables_exist(self, fresh_db):
         conn, _ = fresh_db
@@ -135,6 +137,7 @@ class TestFreshDB:
             "005_programs",
             "006_evidence_modes_taxonomy",
             "007_recon_assets",
+            "008_saved_commands",
         ]
 
 
@@ -173,6 +176,7 @@ class TestPopulatedDB:
             "005_programs",
             "006_evidence_modes_taxonomy",
             "007_recon_assets",
+            "008_saved_commands",
         }
 
     def test_existing_data_preserved(self, main_initialized_db):
@@ -324,12 +328,12 @@ class TestCLI:
     def test_status_on_fresh_dir(self, tmp_path):
         r = self._run(["status"], tmp_path)
         assert r.returncode == 0, r.stderr
-        assert "pending (7)" in r.stdout
+        assert "pending (8)" in r.stdout
 
     def test_up_applies_all(self, tmp_path):
         r = self._run(["up", "--no-backup"], tmp_path)
         assert r.returncode == 0, r.stderr
-        assert "applied 7 migration" in r.stdout
+        assert "applied 8 migration" in r.stdout
 
     def test_up_twice_noop(self, tmp_path):
         self._run(["up", "--no-backup"], tmp_path)

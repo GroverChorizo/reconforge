@@ -3061,6 +3061,12 @@ class ReconHandler(BaseHTTPRequestHandler):
             return self._api_history(qs)
         if path == "/api/logs":
             return self._api_logs(qs)
+        # saved command library (per program/target)
+        if path == "/api/commands":
+            return self._api_commands_list(qs)
+        # scan runs on disk (out/<target>/<datestamp>/<phase>/)
+        if path == "/api/runs":
+            return self._api_runs_list(qs)
         # monitors
         if path == "/api/monitors":
             return self._api_monitors_list()
@@ -3105,6 +3111,8 @@ class ReconHandler(BaseHTTPRequestHandler):
             return self._api_scope_save(session)
         if path == "/api/history":
             return self._api_history_add(session)
+        if path == "/api/commands":
+            return self._api_commands_create(session)
         if path == "/api/pipeline/run":
             return self._api_pipeline_run(session)
         if path == "/api/agent/run":
@@ -3153,6 +3161,9 @@ class ReconHandler(BaseHTTPRequestHandler):
         self._err("Not found", 404)
 
     def _route_delete(self, path: str, qs: Dict, session: Dict) -> None:
+        m = re.match(r"^/api/commands/(\d+)$", path)
+        if m:
+            return self._api_commands_delete(int(m.group(1)), session)
         m = re.match(r"^/api/monitors/(\d+)$", path)
         if m:
             return self._api_monitors_delete(int(m.group(1)))
@@ -3736,6 +3747,77 @@ class ReconHandler(BaseHTTPRequestHandler):
             source = "forge"
         add_history(domain, source, text[:500])
         return self._ok({"domain": domain, "source": source})
+
+    # ── API: saved command library (per program/target) ──────
+    def _api_commands_list(self, qs: Dict) -> None:
+        target = (qs.get("target", [None])[0] or "").strip().lower()
+        if target:
+            rows = db_rows("SELECT * FROM saved_commands WHERE target=? "
+                           "ORDER BY created_at DESC, id DESC", (target,))
+        else:
+            rows = db_rows("SELECT * FROM saved_commands "
+                           "ORDER BY created_at DESC, id DESC LIMIT 200")
+        self._ok(rows_to_list(rows))
+
+    def _api_commands_create(self, session: Dict) -> None:
+        body   = self._body_json() or {}
+        target = (body.get("target") or "").strip().lower()
+        cmd    = (body.get("cmd") or "").strip()
+        name   = (body.get("name") or "").strip()
+        if not target or not _valid_target(target):
+            return self._err("valid target required")
+        if not cmd:
+            return self._err("cmd required")
+        cur = db_exec("INSERT INTO saved_commands(target,name,cmd,created_by) "
+                      "VALUES(?,?,?,?)",
+                      (target, name[:120], cmd[:2000], session.get("username", "")))
+        add_history(target, "note", f"saved command: {name or cmd[:60]}")
+        self._ok({"id": cur.lastrowid, "target": target, "name": name, "cmd": cmd},
+                 "command saved")
+
+    def _api_commands_delete(self, cmd_id: int, session: Dict) -> None:
+        db_exec("DELETE FROM saved_commands WHERE id=?", (cmd_id,))
+        self._ok(msg="deleted")
+
+    # ── API: scan runs (on-disk dated run dirs) ──────────────
+    def _api_runs_list(self, qs: Dict) -> None:
+        """List dated scan runs for a target — out/<target>/<datestamp>/<phase>/.
+        Pure filesystem read so past runs stay browsable and never get buried."""
+        target = (qs.get("target", [None])[0] or "").strip().lower()
+        if not target or not _valid_target(target):
+            return self._err("valid target required")
+        root = os.path.join(_phase_out_root(), target)
+        active = _phase_runs.get(target)
+        runs: List[Dict[str, Any]] = []
+        if os.path.isdir(root):
+            for ds in sorted(os.listdir(root), reverse=True):
+                run_path = os.path.join(root, ds)
+                if not os.path.isdir(run_path):
+                    continue
+                phases = []
+                for ph in sorted(os.listdir(run_path)):
+                    ph_path = os.path.join(run_path, ph)
+                    if not os.path.isdir(ph_path):
+                        continue
+                    files = 0
+                    latest: Optional[float] = None
+                    for dirpath, _dirs, fnames in os.walk(ph_path):
+                        for fn in fnames:
+                            files += 1
+                            try:
+                                mt = os.path.getmtime(os.path.join(dirpath, fn))
+                                if latest is None or mt > latest:
+                                    latest = mt
+                            except OSError:
+                                pass
+                    phases.append({
+                        "phase": ph, "files": files,
+                        "modified": (datetime.fromtimestamp(latest).strftime("%Y-%m-%d %H:%M")
+                                     if latest else None),
+                    })
+                runs.append({"datestamp": ds, "path": run_path,
+                             "phases": phases, "active": active == ds})
+        self._ok({"target": target, "root": root, "runs": runs})
 
     def _api_logs(self, qs: Dict) -> None:
         src_filter = qs.get("src", [None])[0]
